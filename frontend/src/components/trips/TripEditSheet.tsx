@@ -81,6 +81,9 @@ export function TripEditSheet({ trip, open, onOpenChange }: TripEditSheetProps) 
   const home = (user?.currency || 'MYR').toUpperCase();
   const { updateTrip } = useTrips({ enabled: false });
   const fx = useRates(home);
+  // What the form started from. Saves diff against this, not the live trip: a group trip polls every 25 s, and
+  // diffing against a newer copy would send fields this person never touched and undo someone else's change.
+  const [base, setBase] = useState<Trip>(trip);
   const [state, setState] = useState<EditState>(() => fromTrip(trip));
   const [errors, setErrors] = useState<EditErrors>({});
   const [tried, setTried] = useState(false);
@@ -110,6 +113,7 @@ export function TripEditSheet({ trip, open, onOpenChange }: TripEditSheetProps) 
   // Fresh copy of the trip every time the sheet opens.
   useEffect(() => {
     if (open) {
+      setBase(trip);
       setState(fromTrip(trip));
       setErrors({});
       setTried(false);
@@ -128,9 +132,9 @@ export function TripEditSheet({ trip, open, onOpenChange }: TripEditSheetProps) 
     return { ...validateStep(d, 1, home), ...validateStep(d, 2, home), ...validateStep(d, 4, home), ...pickServer(errors) };
   }, [tried, state, home, errors]);
 
-  const changes = editChanges(trip, state);
+  const changes = editChanges(base, state);
   // Any edit to the form enables Save (even one that won't parse, so the error can say why).
-  const initial = useMemo(() => fromTrip(trip), [trip]);
+  const initial = useMemo(() => fromTrip(base), [base]);
   const dirty = JSON.stringify(state) !== JSON.stringify(initial);
   const hasChanges = Object.keys(changes).length > 1;
 

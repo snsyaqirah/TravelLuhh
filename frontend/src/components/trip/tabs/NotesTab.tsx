@@ -26,6 +26,7 @@ import { NotePage } from '@/components/notes/NotePage';
 import { QuickInfoPanel } from '@/components/notes/QuickInfoPanel';
 import { quickInfoSummary } from '@/components/notes/quickInfo';
 import { useLegacyNotesMigration } from '@/components/notes/useLegacyNotesMigration';
+import { apiPaths } from '@/services/apiPaths';
 
 export interface NotesTabProps {
   trip: Trip;
@@ -60,6 +61,7 @@ export function NotesTab({ trip, canEdit }: NotesTabProps) {
   const undoable = useUndoableDelete<Note>({
     queryKey: queryKeys.notes(trip.id),
     remove: (n) => deleteNote(n.id),
+    hidePath: (n) => apiPaths.note(trip.id, n.id),
     message: (n) => `Removed "${n.title?.trim() || noteCategoryMeta(n.infoKey).label}".`,
     flushKey: pathname,
   });

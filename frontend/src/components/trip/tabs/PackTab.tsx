@@ -18,6 +18,7 @@ import { PackChecklist } from '@/components/packing/PackChecklist';
 import { QuickAdd } from '@/components/packing/QuickAdd';
 import { QuickPacks } from '@/components/packing/QuickPacks';
 import { groupPacking, packProgress, presetToast, progressText } from '@/components/packing/packing';
+import { apiPaths } from '@/services/apiPaths';
 
 export interface PackTabProps {
   trip: Trip;
@@ -44,6 +45,7 @@ export function PackTab({ trip, canEdit }: PackTabProps) {
   const undoable = useUndoableDelete<PackingItem>({
     queryKey: queryKeys.packing(trip.id),
     remove: (item) => deleteItem(item.id),
+    hidePath: (item) => apiPaths.packingItem(trip.id, item.id),
     message: (item) => `Removed "${item.label}".`,
     flushKey: pathname,
   });

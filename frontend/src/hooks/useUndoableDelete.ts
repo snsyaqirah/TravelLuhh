@@ -1,10 +1,12 @@
 // Delete with undo (spec §9.6 ledger): the row leaves the cache at once, a snackbar offers Undo for 5 s, and
 // the DELETE is only sent when the timer ends — or immediately when the component unmounts, `flushKey`
-// changes (route change) or the page is being hidden. No confirm dialog.
+// changes (route change) or the page is being hidden (then with fetch keepalive when `hidePath` is given, so
+// the request outlives the page). No confirm dialog.
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useQueryClient, type QueryKey } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { getErrorMessage } from '@/lib/axios';
+import { keepaliveDelete, onPageHidden } from '@/lib/keepaliveDelete';
 
 export interface UndoableDeleteOptions<T extends { id: number }> {
   /** List cache the item lives in (an array of T). */
@@ -19,6 +21,11 @@ export interface UndoableDeleteOptions<T extends { id: number }> {
   undoLabel?: string;
   /** Pending deletes are sent when this value changes. Pass the current pathname. */
   flushKey?: unknown;
+  /**
+   * API path of the item's DELETE (e.g. '/trips/2/packing/9'). When set, deletes still pending as the page is
+   * hidden or closed go out with fetch keepalive instead of `remove`.
+   */
+  hidePath?: (item: T) => string;
 }
 
 interface Pending<T> {
@@ -63,15 +70,16 @@ export function useUndoableDelete<T extends { id: number }>(opts: UndoableDelete
   );
 
   const commit = useCallback(
-    (id: number) => {
+    (id: number, keepalive = false) => {
       const p = pending.current.get(id);
       if (!p) return;
       window.clearTimeout(p.timer);
       pending.current.delete(id);
       toast.dismiss(p.toastId);
       syncIds();
-      const { remove, onCommitted, onFailed } = optsRef.current;
-      remove(p.item).then(
+      const { remove, onCommitted, onFailed, hidePath } = optsRef.current;
+      const send = () => remove(p.item);
+      (keepalive && hidePath ? keepaliveDelete(hidePath(p.item), send) : send()).then(
         () => onCommitted?.(p.item),
         (err) => {
           restore(p);
@@ -83,9 +91,12 @@ export function useUndoableDelete<T extends { id: number }>(opts: UndoableDelete
     [restore, syncIds]
   );
 
-  const flush = useCallback(() => {
-    for (const id of Array.from(pending.current.keys())) commit(id);
-  }, [commit]);
+  const flush = useCallback(
+    (keepalive = false) => {
+      for (const id of Array.from(pending.current.keys())) commit(id, keepalive);
+    },
+    [commit]
+  );
 
   const undo = useCallback(
     (id: number) => {
@@ -128,13 +139,13 @@ export function useUndoableDelete<T extends { id: number }>(opts: UndoableDelete
 
   useEffect(() => {
     mounted.current = true;
-    const onHide = () => flush();
-    window.addEventListener('pagehide', onHide);
+    const off = onPageHidden(() => flush(true));
     return () => {
       mounted.current = false;
-      window.removeEventListener('pagehide', onHide);
+      off();
     };
   }, [flush]);
 
-  return { remove, undo, flush, pendingIds };
+  const flushNow = useCallback(() => flush(), [flush]);
+  return { remove, undo, flush: flushNow, pendingIds };
 }

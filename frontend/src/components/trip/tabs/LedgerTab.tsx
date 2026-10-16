@@ -26,7 +26,7 @@ import { LedgerList } from '@/components/ledger/LedgerList';
 import { shortDay } from '@/components/ledger/ledgerUi';
 import { isISODate } from '@/components/ledger/expenseDraft';
 import { buildLedger, countByCategory, filterLedger, hasFilters, type LedgerGlyphs } from '@/components/ledger/ledgerModel';
-import { flushExpenseRemovals, removeExpenseWithUndo, usePendingExpenseDeletes } from '@/components/ledger/pendingDeletes';
+import { flushExpenseRemovals, removeExpenseWithUndo } from '@/components/ledger/pendingDeletes';
 
 export interface LedgerTabProps {
   trip: Trip;
@@ -53,9 +53,8 @@ export function LedgerTab({ trip, fund, canEdit }: LedgerTabProps) {
 
   const qc = useQueryClient();
   const live = isGroupTrip(trip) && fund.phase === 'onTheRoad';
-  const { expenses: loaded, isLoading, error, refetch } = useExpenses(trip.id, { live });
-  const pendingIds = usePendingExpenseDeletes();
-  const expenses = useMemo(() => (pendingIds.size ? loaded.filter((e) => !pendingIds.has(e.id)) : loaded), [loaded, pendingIds]);
+  // useExpenses already hides entries waiting on their Undo window.
+  const { expenses, isLoading, error, refetch } = useExpenses(trip.id, { live });
   // Pending deletes go out at once when the ledger unmounts or the route changes (§9.6).
   useEffect(() => () => flushExpenseRemovals(), [pathname]);
   const saving = fund.mode === 'saving';

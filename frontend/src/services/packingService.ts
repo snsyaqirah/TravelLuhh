@@ -1,5 +1,6 @@
 import { api } from '@/lib/axios';
 import type { PackingItem, PackingPreset } from '@/types';
+import { apiPaths } from '@/services/apiPaths';
 
 export type { PackingItem, PackingPreset } from '@/types';
 
@@ -20,7 +21,7 @@ export const packingService = {
   },
 
   async deleteItem(tripId: number, itemId: number): Promise<void> {
-    await api.delete(`/trips/${tripId}/packing/${itemId}`);
+    await api.delete(apiPaths.packingItem(tripId, itemId));
   },
 
   /** Adds a preset list. Sent as ?type= and {preset} so both server variants accept it. */

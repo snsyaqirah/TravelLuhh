@@ -1,6 +1,7 @@
 // Ledger delete with Undo (§9.6) that outlives whichever row or sheet started it. The entry leaves the list at
 // once, a 5 s snackbar offers Undo, and the DELETE goes out when the timer ends, when the ledger unmounts or
-// the route changes (LedgerTab flushes), or when the page is hidden. No confirm dialog.
+// the route changes (LedgerTab flushes), or when the page is hidden (sent with fetch keepalive so it isn't
+// cancelled with the page). No confirm dialog. useExpenses hides pending ids from every list it returns.
 //
 // Same behaviour as useExpenses().removeWithUndo, but the pending state lives here rather than in a hook
 // instance: the expense detail sheet is unmounted the moment it closes, and a hook-held undo would be sent
@@ -13,6 +14,8 @@ import { expenseService } from '@/services/expenseService';
 import { getErrorMessage } from '@/lib/axios';
 import { invalidateKeys, moneyKeys, queryKeys } from '@/lib/queryClient';
 import { appEvents } from '@/lib/appEvents';
+import { keepaliveDelete, onPageHidden } from '@/lib/keepaliveDelete';
+import { apiPaths } from '@/services/apiPaths';
 
 export const UNDO_MS = 5000;
 
@@ -42,7 +45,7 @@ function restore(p: Pending) {
   });
 }
 
-function commit(id: number) {
+function commit(id: number, o: { keepalive?: boolean } = {}) {
   const p = pending.get(id);
   if (!p) return;
   clearTimeout(p.timer);
@@ -50,7 +53,8 @@ function commit(id: number) {
   toast.dismiss(p.toastId);
   publish();
   const e = p.expense;
-  expenseService.deleteExpense(e.id).then(
+  const send = () => expenseService.deleteExpense(e.id);
+  (o.keepalive ? keepaliveDelete(apiPaths.expense(e.id), send) : send()).then(
     () => {
       void invalidateKeys(p.qc, moneyKeys(e.tripId));
       appEvents.emit({ type: 'coinBack', tripId: e.tripId, date: e.expenseDate, category: e.category, amount: e.amount });
@@ -73,9 +77,9 @@ export function undoExpenseRemoval(id: number) {
   publish();
 }
 
-/** Send every pending DELETE now (ledger unmount, route change, page hidden). */
-export function flushExpenseRemovals() {
-  for (const id of Array.from(pending.keys())) commit(id);
+/** Send every pending DELETE now (ledger unmount, route change; `keepalive` when the page is going away). */
+export function flushExpenseRemovals(o: { keepalive?: boolean } = {}) {
+  for (const id of Array.from(pending.keys())) commit(id, o);
 }
 
 /** Remove now (visually), delete for real after the undo window. */
@@ -115,9 +119,7 @@ export function usePendingExpenseDeletes(): ReadonlySet<number> {
   );
 }
 
-if (typeof window !== 'undefined') {
-  window.addEventListener('pagehide', flushExpenseRemovals);
-}
+onPageHidden(() => flushExpenseRemovals({ keepalive: true }));
 
 /** Tests only: forget pending deletes without sending them. */
 export function resetPendingDeletesForTests() {

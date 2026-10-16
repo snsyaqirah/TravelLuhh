@@ -1,5 +1,6 @@
 import { api } from '@/lib/axios';
 import type { Note, NoteInput } from '@/types';
+import { apiPaths } from '@/services/apiPaths';
 
 export const noteService = {
   async list(tripId: number): Promise<Note[]> {
@@ -19,6 +20,6 @@ export const noteService = {
   },
 
   async remove(tripId: number, noteId: number): Promise<void> {
-    await api.delete(`/trips/${tripId}/notes/${noteId}`);
+    await api.delete(apiPaths.note(tripId, noteId));
   },
 };

@@ -1,5 +1,6 @@
 import { api } from '@/lib/axios';
 import type { CreateItineraryItemRequest, ItineraryItem } from '@/types';
+import { apiPaths } from '@/services/apiPaths';
 
 export type { CreateItineraryItemRequest, ItineraryItem } from '@/types';
 
@@ -20,6 +21,6 @@ export const itineraryService = {
   },
 
   async deleteItem(tripId: number, itemId: number): Promise<void> {
-    await api.delete(`/trips/${tripId}/itinerary/${itemId}`);
+    await api.delete(apiPaths.itineraryItem(tripId, itemId));
   },
 };

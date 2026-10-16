@@ -17,6 +17,8 @@ import { toTripCurrency } from '@/lib/money';
 import { toId } from '@/lib/ids';
 import { appEvents } from '@/lib/appEvents';
 import { useUndoableDelete } from '@/hooks/useUndoableDelete';
+import { usePendingExpenseDeletes } from '@/components/ledger/pendingDeletes';
+import { apiPaths } from '@/services/apiPaths';
 
 const EMPTY: Expense[] = [];
 const LIVE_POLL_MS = 25_000;
@@ -152,6 +154,7 @@ export function useExpenses(tripId: number | string | undefined, opts: UseExpens
   const undoable = useUndoableDelete<Expense>({
     queryKey: key,
     remove: (e) => expenseService.deleteExpense(e.id),
+    hidePath: (e) => apiPaths.expense(e.id),
     message: (e) => `Removed "${e.description}".`,
     flushKey: opts.flushKey,
     onCommitted: (e) => {
@@ -166,9 +169,15 @@ export function useExpenses(tripId: number | string | undefined, opts: UseExpens
 
   const raw = query.data ?? EMPTY;
   const { pendingIds } = undoable;
+  // Entries removed with Undo (from any ledger row or receipt) stay hidden until their DELETE goes out, even
+  // when a 25 s poll or a focus refetch brings them back: figures, the scene, counts and exports all agree.
+  const sharedPendingIds = usePendingExpenseDeletes();
   const expenses = useMemo(
-    () => (pendingIds.size ? raw.filter((e) => !pendingIds.has(e.id)) : raw),
-    [raw, pendingIds]
+    () =>
+      pendingIds.size || sharedPendingIds.size
+        ? raw.filter((e) => !pendingIds.has(e.id) && !sharedPendingIds.has(e.id))
+        : raw,
+    [raw, pendingIds, sharedPendingIds]
   );
 
   const totals = useMemo(() => {

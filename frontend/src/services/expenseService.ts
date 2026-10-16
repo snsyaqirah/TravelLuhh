@@ -1,6 +1,7 @@
 import { api } from '@/lib/axios';
 import type { CreateExpenseRequest, CreateSubItemInput, Expense } from '@/types';
 import { normalizeExpense } from './normalize';
+import { apiPaths } from '@/services/apiPaths';
 
 export type { CreateExpenseRequest } from '@/types';
 /** @deprecated Use CreateSubItemInput from '@/types'. */
@@ -26,6 +27,6 @@ export const expenseService = {
   },
 
   async deleteExpense(expenseId: number): Promise<void> {
-    await api.delete(`/expenses/${expenseId}`);
+    await api.delete(apiPaths.expense(expenseId));
   },
 };

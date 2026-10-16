@@ -54,7 +54,7 @@ function HarnessTrip() {
         expenseId={sheet.sheet === 'expense' ? sheet.id : null}
         open={sheet.sheet === 'expense'}
         onOpenChange={(o) => !o && sheet.close()}
-        onEdit={(e) => sheet.open('log-spend', { id: e.id })}
+        onEdit={(e) => sheet.open('log-spend', { id: e.id, replace: true })}
       />
     </div>
   );

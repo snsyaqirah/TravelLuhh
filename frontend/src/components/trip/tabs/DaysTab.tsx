@@ -18,6 +18,7 @@ import { DayStrip } from '@/components/itinerary/DayStrip';
 import { DayTimeline } from '@/components/itinerary/DayTimeline';
 import { StopSheet } from '@/components/itinerary/StopSheet';
 import { dayTabId, resolveSelectedDay, stopCount, tripDayStubs } from '@/components/itinerary/days';
+import { apiPaths } from '@/services/apiPaths';
 
 export interface DaysTabProps {
   trip: Trip;
@@ -59,6 +60,7 @@ export function DaysTab({ trip, canEdit, selectedDay, onSelectDay }: DaysTabProp
   const undoable = useUndoableDelete<ItineraryItem>({
     queryKey: queryKeys.itinerary(trip.id),
     remove: (item) => deleteItem(item.id),
+    hidePath: (item) => apiPaths.itineraryItem(trip.id, item.id),
     message: (item) => `Removed "${item.title}".`,
     flushKey: pathname,
   });

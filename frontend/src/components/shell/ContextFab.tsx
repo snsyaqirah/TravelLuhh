@@ -7,6 +7,7 @@ import { getPhase } from '@/lib/phase';
 import { cn } from '@/lib/utils';
 import { tripIdFromPath, withParam } from '@/components/shell/routeMeta';
 import { FAB_FACE, FAB_ROOT } from '@/components/trip/fabStyle';
+import { IN_APP_SHEET_STATE } from '@/components/trip/useTripSheet';
 
 // Radix menu + floating-ui stay out of the entry chunk until an upcoming trip needs the dial.
 const FabDial = lazy(() => import('@/components/trip/FabDial'));
@@ -26,7 +27,9 @@ export function ContextFab({ className }: { className?: string }) {
   const dial = canLog && trip != null && getPhase(trip, today) === 'upcoming';
 
   if (dial) {
-    const go = (sheet: 'drop-in' | 'log-spend') => navigate({ pathname, search: withParam(search, 'sheet', sheet) });
+    // Marked as an in-app sheet entry so closing it steps back instead of leaving a duplicate page entry.
+    const go = (sheet: 'drop-in' | 'log-spend') =>
+      navigate({ pathname, search: withParam(search, 'sheet', sheet) }, { state: IN_APP_SHEET_STATE });
     return (
       <Suspense
         fallback={
@@ -48,7 +51,7 @@ export function ContextFab({ className }: { className?: string }) {
   const label = canLog ? 'Log spend' : 'New';
 
   return (
-    <Link to={to} className={cn(FAB_ROOT, className)}>
+    <Link to={to} state={canLog ? IN_APP_SHEET_STATE : undefined} className={cn(FAB_ROOT, className)}>
       <span aria-hidden className={FAB_FACE}>
         <Plus className="h-6 w-6" strokeWidth={2} />
       </span>

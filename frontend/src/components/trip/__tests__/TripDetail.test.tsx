@@ -2,9 +2,10 @@
 // Data hooks, the scene, the tabs and the sheets are stand-ins; this is about what the page wires together.
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
-import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
+import { MemoryRouter, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import type { Trip } from '@/types';
 import TripDetail from '@/pages/TripDetail';
+import { IN_APP_SHEET_STATE } from '@/components/trip/useTripSheet';
 
 vi.setConfig({ testTimeout: 20_000 });
 
@@ -57,7 +58,14 @@ vi.mock('@/components/trip/tabs/DaysTab', () => ({
 vi.mock('@/components/trip/tabs/PackTab', () => ({ PackTab: () => <div>tab:pack</div> }));
 vi.mock('@/components/trip/tabs/NotesTab', () => ({ NotesTab: () => <div>tab:notes</div> }));
 vi.mock('@/components/trip/sheets/LogSpendSheet', () => ({
-  LogSpendSheet: ({ expense: e }: { expense?: { description: string } }) => <div>sheet:log-spend {e?.description ?? 'new'}</div>,
+  LogSpendSheet: ({ expense: e, onOpenChange }: { expense?: { description: string }; onOpenChange: (o: boolean) => void }) => (
+    <div>
+      sheet:log-spend {e?.description ?? 'new'}
+      <button type="button" onClick={() => onOpenChange(false)}>
+        save spend
+      </button>
+    </div>
+  ),
 }));
 vi.mock('@/components/trip/sheets/ExpenseDetailSheet', () => ({
   ExpenseDetailSheet: ({ expenseId, onEdit }: { expenseId: number; onEdit: (e: typeof expense) => void }) => (
@@ -66,7 +74,16 @@ vi.mock('@/components/trip/sheets/ExpenseDetailSheet', () => ({
     </button>
   ),
 }));
-vi.mock('@/components/trip/sheets/LogbookSheet', () => ({ LogbookSheet: ({ tripId }: { tripId: number }) => <div>sheet:logbook {tripId}</div> }));
+vi.mock('@/components/trip/sheets/LogbookSheet', () => ({
+  LogbookSheet: ({ tripId, onOpenChange }: { tripId: number; onOpenChange: (o: boolean) => void }) => (
+    <div>
+      sheet:logbook {tripId}
+      <button type="button" onClick={() => onOpenChange(false)}>
+        close logbook
+      </button>
+    </div>
+  ),
+}));
 vi.mock('@/components/trip/sheets/DropInSheet', () => ({ DropInSheet: () => <div>sheet:drop-in</div> }));
 vi.mock('@/components/trips/TripEditSheet', () => ({ TripEditSheet: () => <div>sheet:edit</div> }));
 
@@ -95,12 +112,23 @@ function makeTrip(over: Partial<Trip> = {}): Trip {
 
 function Where() {
   const { pathname, search } = useLocation();
-  return <output data-testid="where">{pathname + search}</output>;
+  const navigate = useNavigate();
+  return (
+    <>
+      <output data-testid="where">{pathname + search}</output>
+      <button type="button" onClick={() => navigate(-1)}>
+        browser back
+      </button>
+    </>
+  );
 }
 
-function renderAt(url: string) {
+type Entry = string | { pathname: string; search?: string; state?: unknown };
+
+function renderAt(url: string | Entry[]) {
+  const entries = typeof url === 'string' ? [url] : url;
   return render(
-    <MemoryRouter initialEntries={[url]}>
+    <MemoryRouter initialEntries={entries} initialIndex={entries.length - 1}>
       <Routes>
         <Route
           path="/trips/:tripId/:tab"
@@ -172,6 +200,30 @@ describe('TripDetail sheets', () => {
     fireEvent.click(screen.getByText('sheet:expense 5'));
     expect(where()).toBe('/trips/2/ledger?sheet=log-spend&id=5');
     expect(screen.getByText('sheet:log-spend Ichiran Shinjuku')).toBeInTheDocument();
+  });
+
+  it('receipt opened from the ledger → Edit → Save → Back leaves the trip, never back to the receipt', () => {
+    state.trip = makeTrip();
+    // the ledger row tap pushed the receipt as an in-app sheet entry
+    renderAt(['/trips', '/trips/2/ledger', { pathname: '/trips/2/ledger', search: '?sheet=expense&id=5', state: IN_APP_SHEET_STATE }]);
+    fireEvent.click(screen.getByText('sheet:expense 5'));
+    expect(where()).toBe('/trips/2/ledger?sheet=log-spend&id=5');
+    fireEvent.click(screen.getByRole('button', { name: 'save spend' }));
+    expect(where()).toBe('/trips/2/ledger');
+    expect(screen.queryByText(/sheet:expense/)).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'browser back' }));
+    expect(where()).toBe('/trips');
+  });
+
+  it('open a sheet, close it with X, then one Back leaves the trip (no dead Back press)', () => {
+    state.trip = makeTrip();
+    renderAt(['/trips', '/trips/2/fund']);
+    fireEvent.click(screen.getByRole('button', { name: 'Logbook' }));
+    expect(where()).toBe('/trips/2/fund?sheet=logbook');
+    fireEvent.click(screen.getByRole('button', { name: 'close logbook' }));
+    expect(where()).toBe('/trips/2/fund');
+    fireEvent.click(screen.getByRole('button', { name: 'browser back' }));
+    expect(where()).toBe('/trips');
   });
 
   it('the header clock opens the logbook', () => {

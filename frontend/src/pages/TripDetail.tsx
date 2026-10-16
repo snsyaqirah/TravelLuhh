@@ -44,8 +44,6 @@ import { TripEditSheet } from '@/components/trips/TripEditSheet';
 import { fundNotice } from '@/lib/fundCopy';
 import { isLiveTrip } from '@/lib/phase';
 import { cn } from '@/lib/utils';
-import type { Expense, Trip } from '@/types';
-import type { FundState } from '@/hooks/useFund';
 
 const ID_BASE = 'trip';
 const ISO_DAY = /^\d{4}-\d{2}-\d{2}$/;
@@ -316,7 +314,9 @@ export default function TripDetail() {
           expenseId={sheetId}
           open
           onOpenChange={onSheetChange}
-          onEdit={(e) => open('log-spend', { id: e.id })}
+          // Receipt → edit form is one sheet handing over to the next: replace, so Save → Back leaves the trip
+          // instead of reopening the receipt.
+          onEdit={(e) => open('log-spend', { id: e.id, replace: true })}
         />
       ) : sheet === 'logbook' ? (
         <LogbookSheet tripId={trip.id} open onOpenChange={onSheetChange} />

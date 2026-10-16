@@ -1,6 +1,6 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { currencyForCountry, initials, isEmail, maskEmail, passwordStrength, retryAfterSeconds } from '../authHelpers';
-import { rememberOAuthNext, takeOAuthNext } from '../oauthNext';
+import { OAUTH_FLOW_TTL_MS, beginOAuthFlow, rememberOAuthNext, takeOAuthFlow, takeOAuthNext } from '../oauthNext';
 import { checkNewPassword } from '../stepHelpers';
 import { apiError } from './testUtils';
 
@@ -75,5 +75,31 @@ describe('oauthNext', () => {
     expect(takeOAuthNext()).toBe('/home');
     rememberOAuthNext('/login');
     expect(takeOAuthNext()).toBe('/home');
+  });
+  it('a started flow is accepted once, within 10 minutes, with a random nonce', () => {
+    const t0 = 1_800_000_000_000;
+    expect(takeOAuthFlow(t0)).toBe(false);
+    beginOAuthFlow(t0);
+    const first = JSON.parse(sessionStorage.getItem('travelluhh_oauth_flow') as string).nonce;
+    expect(first).toMatch(/^[0-9a-f]{32}$/);
+    expect(takeOAuthFlow(t0 + 60_000)).toBe(true);
+    expect(takeOAuthFlow(t0 + 60_000)).toBe(false);
+    beginOAuthFlow(t0);
+    expect(JSON.parse(sessionStorage.getItem('travelluhh_oauth_flow') as string).nonce).not.toBe(first);
+    expect(takeOAuthFlow(t0 + OAUTH_FLOW_TTL_MS)).toBe(false);
+    sessionStorage.setItem('travelluhh_oauth_flow', '{"at":1}');
+    expect(takeOAuthFlow(t0)).toBe(false);
+  });
+  it('blocked storage means no flow, never a crash', () => {
+    const get = vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
+      throw new Error('blocked');
+    });
+    const set = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new Error('blocked');
+    });
+    expect(() => beginOAuthFlow()).not.toThrow();
+    expect(takeOAuthFlow()).toBe(false);
+    get.mockRestore();
+    set.mockRestore();
   });
 });
