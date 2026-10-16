@@ -1,0 +1,107 @@
+# TravelLuhh backend configuration template.
+#
+# HOW TO USE
+#   Option A: copy this file to application.yml in this folder (application.yml is gitignored) and fill in
+#             real values, or
+#   Option B: keep the ${ENV_VAR:default} placeholders and supply the values as environment variables
+#             (for Docker, put them in backend/.env; docker-compose.yml loads it when it exists).
+#   Every placeholder has a default that is safe for local development only.
+#
+# SECURITY
+#   An earlier application.yml with real values (Neon DB password, Gmail app password, JWT secret) was committed
+#   to git history. Treat those as compromised: rotate the Neon password, the Gmail app password, the JWT secret
+#   and, for hygiene, the Google OAuth client secret. Rewriting history does not un-leak them.
+#
+#   JWT_SECRET: at least 32 bytes. Generate one with `openssl rand -base64 48` and set it as base64:<that value>.
+#   A plain string (no base64: prefix) is used as raw UTF-8 bytes, which is how older configs worked.
+#   Changing the secret logs everyone out once.
+
+spring:
+  application:
+    name: travelluhh-backend
+
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/travelluhh}
+    username: ${DB_USERNAME:travelluhh}
+    password: ${DB_PASSWORD:travelluhh}
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      connection-timeout: 30000
+      maximum-pool-size: 5
+      minimum-idle: 1
+      keepalive-time: 60000
+      connection-test-query: SELECT 1
+
+  jpa:
+    hibernate:
+      ddl-auto: none          # schema is managed by backend/schema.sql and backend/migrations/*.sql
+    show-sql: false
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+    open-in-view: false
+
+  mail:
+    host: ${MAIL_HOST:smtp.gmail.com}
+    port: ${MAIL_PORT:587}
+    username: ${MAIL_USERNAME:}
+    password: ${MAIL_PASSWORD:}
+    properties:
+      mail:
+        smtp:
+          auth: true
+          starttls:
+            enable: true
+          connectiontimeout: 10000
+          timeout: 10000
+          writetimeout: 10000
+
+  security:
+    oauth2:
+      client:
+        registration:
+          google:
+            client-id: ${GOOGLE_CLIENT_ID:replace-with-google-client-id}
+            client-secret: ${GOOGLE_CLIENT_SECRET:replace-with-google-client-secret}
+            scope:
+              - email
+              - profile
+            # Register http://localhost:8080/login/oauth2/code/google (and your production equivalent)
+            # as an authorised redirect URI in Google Cloud Console.
+            redirect-uri: "{baseUrl}/login/oauth2/code/{registrationId}"
+        provider:
+          google:
+            authorization-uri: https://accounts.google.com/o/oauth2/v2/auth
+            token-uri: https://oauth2.googleapis.com/token
+            user-info-uri: https://www.googleapis.com/oauth2/v3/userinfo
+            user-name-attribute: sub
+
+server:
+  port: ${PORT:8080}
+  error:
+    include-message: never        # API errors come from GlobalExceptionHandler; never echo internals
+    include-binding-errors: never
+    include-stacktrace: never
+
+app:
+  jwt:
+    secret: ${JWT_SECRET:dev-only-insecure-jwt-secret-change-me-before-deploying-0123456789}
+    expiration: 86400000            # access token, 24 hours
+    refresh-expiration: 604800000   # refresh token, 7 days (stored hashed in refresh_tokens)
+    verification-expiration: 300000 # proof-of-code token for complete-signup / reset-password, 5 minutes
+
+  # Comma-separated. Exact origins, or patterns such as https://*.example.com
+  cors:
+    allowed-origins: ${CORS_ORIGINS:http://localhost:5173,http://localhost:5174,http://localhost:8081}
+
+  # Where Google sign-in sends people back to (the SPA). No trailing slash.
+  frontend:
+    url: ${FRONTEND_URL:http://localhost:5173}
+
+  email:
+    verification-expiry-minutes: 10
+    from: ${MAIL_FROM:${MAIL_USERNAME:no-reply@travelluhh.local}}
+
+  # Startup check that backend/migrations/002_revamp.sql has been applied: fail (stop with a clear message),
+  # warn (log and keep going) or off.
+  schema-check: ${SCHEMA_CHECK:fail}

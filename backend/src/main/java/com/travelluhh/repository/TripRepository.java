@@ -10,17 +10,21 @@ import java.util.List;
 
 @Repository
 public interface TripRepository extends JpaRepository<Trip, Long> {
-    
+
     List<Trip> findByOwnerId(Long ownerId);
-    
-    @Query("SELECT DISTINCT t FROM Trip t LEFT JOIN t.members m " +
-           "WHERE t.ownerId = :userId OR m.userId = :userId " +
-           "ORDER BY t.startDate DESC")
-    List<Trip> findAllTripsForUser(@Param("userId") Long userId);
-    
-    @Query("SELECT DISTINCT t FROM Trip t LEFT JOIN t.members m " +
-           "WHERE (t.ownerId = :userId OR m.userId = :userId) " +
-           "AND t.isArchived = false " +
-           "ORDER BY t.startDate DESC")
-    List<Trip> findActiveTripsForUser(@Param("userId") Long userId);
+
+    /** Trips the user owns or is a member of, filtered by archive state (NULL counts as not archived). */
+    @Query("SELECT t FROM Trip t LEFT JOIN FETCH t.owner " +
+           "WHERE (t.ownerId = :userId OR EXISTS (" +
+           "    SELECT m.id FROM TripMember m WHERE m.trip = t AND m.userId = :userId)) " +
+           "AND COALESCE(t.isArchived, false) = :archived " +
+           "ORDER BY t.startDate DESC, t.id DESC")
+    List<Trip> findForUser(@Param("userId") Long userId, @Param("archived") boolean archived);
+
+    /** Every trip the user owns or is a member of, archived or not. */
+    @Query("SELECT t FROM Trip t LEFT JOIN FETCH t.owner " +
+           "WHERE t.ownerId = :userId OR EXISTS (" +
+           "    SELECT m.id FROM TripMember m WHERE m.trip = t AND m.userId = :userId) " +
+           "ORDER BY t.startDate DESC, t.id DESC")
+    List<Trip> findAllForUser(@Param("userId") Long userId);
 }

@@ -7,43 +7,41 @@ import { buttonVariants } from "@/components/ui/button";
 
 export type CalendarProps = React.ComponentProps<typeof DayPicker>;
 
+// A ledger month: Newsreader caption, mono weekday overlines and mono numerals. Selection is a fund
+// block, a range runs through fund-tint, and today carries a brass rule (today is brass everywhere).
 function Calendar({ className, classNames, showOutsideDays = true, ...props }: CalendarProps) {
   return (
     <DayPicker
       showOutsideDays={showOutsideDays}
       className={cn("p-3", className)}
       classNames={{
-        months: "flex flex-col sm:flex-row space-y-4 sm:space-x-4 sm:space-y-0",
-        month: "space-y-4",
-        caption: "flex justify-center pt-1 relative items-center",
-        caption_label: "text-sm font-medium",
-        nav: "space-x-1 flex items-center",
-        nav_button: cn(
-          buttonVariants({ variant: "outline" }),
-          "h-7 w-7 bg-transparent p-0 opacity-50 hover:opacity-100",
-        ),
-        nav_button_previous: "absolute left-1",
-        nav_button_next: "absolute right-1",
-        table: "w-full border-collapse space-y-1",
-        head_row: "flex",
-        head_cell: "text-muted-foreground rounded-md w-9 font-normal text-[0.8rem]",
-        row: "flex w-full mt-2",
-        cell: "h-9 w-9 text-center text-sm p-0 relative [&:has([aria-selected].day-range-end)]:rounded-r-md [&:has([aria-selected].day-outside)]:bg-accent/50 [&:has([aria-selected])]:bg-accent first:[&:has([aria-selected])]:rounded-l-md last:[&:has([aria-selected])]:rounded-r-md focus-within:relative focus-within:z-20",
-        day: cn(buttonVariants({ variant: "ghost" }), "h-9 w-9 p-0 font-normal aria-selected:opacity-100"),
+        months: "flex flex-col gap-4 sm:flex-row sm:gap-6",
+        month: "space-y-3",
+        caption: "relative flex h-10 items-center justify-center",
+        caption_label: "font-display text-lg font-medium leading-6 text-ink",
+        nav: "flex items-center gap-1",
+        nav_button: cn(buttonVariants({ variant: "ghost", size: "icon" }), "h-9 w-9 text-ink-2 hover:bg-accent"),
+        nav_button_previous: "absolute left-0",
+        nav_button_next: "absolute right-0",
+        table: "w-full border-collapse",
+        head_row: "flex border-b border-rule",
+        head_cell: "type-overline flex h-8 w-10 items-center justify-center font-normal text-ink-3",
+        row: "mt-1 flex w-full",
+        cell: "relative h-10 w-10 p-0 text-center focus-within:relative focus-within:z-20 [&:has([aria-selected].day-outside)]:bg-fund-tint/50 [&:has([aria-selected].day-range-middle)]:bg-fund-tint",
+        day: "inline-flex h-10 w-10 items-center justify-center rounded-sm font-mono text-sm tabular-nums text-ink transition-colors duration-micro hover:bg-accent aria-selected:opacity-100",
+        day_range_start: "day-range-start",
         day_range_end: "day-range-end",
-        day_selected:
-          "bg-primary text-primary-foreground hover:bg-primary hover:text-primary-foreground focus:bg-primary focus:text-primary-foreground",
-        day_today: "bg-accent text-accent-foreground",
-        day_outside:
-          "day-outside text-muted-foreground opacity-50 aria-selected:bg-accent/50 aria-selected:text-muted-foreground aria-selected:opacity-30",
-        day_disabled: "text-muted-foreground opacity-50",
-        day_range_middle: "aria-selected:bg-accent aria-selected:text-accent-foreground",
+        day_selected: "bg-fund font-medium text-on-fund hover:bg-fund hover:text-on-fund focus:bg-fund focus:text-on-fund",
+        day_today: "font-semibold shadow-[inset_0_-3px_0_0_hsl(var(--brass))]",
+        day_outside: "day-outside text-ink-3 opacity-70 aria-selected:text-ink-2",
+        day_disabled: "text-ink-3 line-through opacity-50 hover:bg-transparent",
+        day_range_middle: "day-range-middle aria-selected:bg-transparent aria-selected:font-normal aria-selected:text-fund",
         day_hidden: "invisible",
         ...classNames,
       }}
       components={{
-        IconLeft: ({ ..._props }) => <ChevronLeft className="h-4 w-4" />,
-        IconRight: ({ ..._props }) => <ChevronRight className="h-4 w-4" />,
+        IconLeft: () => <ChevronLeft className="h-5 w-5" strokeWidth={1.75} />,
+        IconRight: () => <ChevronRight className="h-5 w-5" strokeWidth={1.75} />,
       }}
       {...props}
     />

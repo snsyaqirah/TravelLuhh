@@ -1,220 +1,102 @@
-import { Link, useNavigate } from 'react-router-dom';
+// Landing `/` (§9.1). Asymmetric 5/7 hero with the TripPlot demo, then the passbook, the three kinds of trip,
+// live rates and the footer. Signed-in visitors go straight to /home.
+import { Link, Navigate } from 'react-router-dom';
 import { useAuth } from '@/context/AuthContext';
-import { useEffect } from 'react';
 import { Button } from '@/components/ui/button';
-import { Compass, MapPin, Wallet, Calendar, ArrowRight, CheckCircle2 } from 'lucide-react';
-import { motion } from 'framer-motion';
+import { AnnotatedPassbook } from '@/components/frontdoor/AnnotatedPassbook';
+import { HeroDemo } from '@/components/frontdoor/HeroDemo';
+import { LiveRates } from '@/components/frontdoor/LiveRates';
+import { SiteBar, SiteFooter } from '@/components/frontdoor/SiteChrome';
+import { TripKinds } from '@/components/frontdoor/TripKinds';
+
+const wrap = 'mx-auto w-full max-w-[1168px] px-4 lg:px-6';
 
 export default function Landing() {
   const { isAuthenticated } = useAuth();
-  const navigate = useNavigate();
-
-  // Redirect if already logged in
-  useEffect(() => {
-    if (isAuthenticated) {
-      navigate('/dashboard', { replace: true });
-    }
-  }, [isAuthenticated, navigate]);
-
-  const features = [
-    {
-      icon: MapPin,
-      title: 'Plan Any Destination',
-      description: 'Organize trips to 40+ countries with seasonal insights and local tips.',
-    },
-    {
-      icon: Wallet,
-      title: 'Track Your Budget',
-      description: 'Set budgets, record expenses, and see spending by category in real-time.',
-    },
-    {
-      icon: Calendar,
-      title: 'Stay on Schedule',
-      description: 'Manage trip dates and never miss your next adventure.',
-    },
-  ];
-
-  const benefits = [
-    'Multi-currency support',
-    'Expense categorization',
-    'Budget progress tracking',
-    'Seasonal travel planning',
-    'Mobile-friendly design',
-    'Export reports (coming soon)',
-  ];
+  if (isAuthenticated) return <Navigate to="/home" replace />;
 
   return (
-    <div className="min-h-screen bg-background">
-      {/* Navbar */}
-      <nav className="border-b border-border bg-background/95 backdrop-blur">
-        <div className="container mx-auto px-4">
-          <div className="flex h-16 items-center justify-between">
-            <Link to="/" className="flex items-center gap-2">
-              <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary text-primary-foreground">
-                <Compass className="h-5 w-5" />
-              </div>
-              <span className="font-display text-xl font-bold">TravelLuhh</span>
-            </Link>
-            <div className="flex items-center gap-3">
-              {isAuthenticated ? (
-                <Link to="/trips">
-                  <Button>Go to Dashboard</Button>
-                </Link>
-              ) : (
-                <>
-                  <Link to="/login">
-                    <Button variant="ghost">Login</Button>
-                  </Link>
-                  <Link to="/register">
-                    <Button>Get Started</Button>
-                  </Link>
-                </>
-              )}
-            </div>
-          </div>
-        </div>
-      </nav>
+    <div className="min-h-dvh bg-background">
+      <SiteBar />
 
-      {/* Hero Section */}
-      <section className="container mx-auto px-4 py-20 lg:py-32">
-        <motion.div
-          initial={{ opacity: 0, y: 30 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.6 }}
-          className="max-w-3xl mx-auto text-center"
-        >
-          <h1 className="font-display text-4xl sm:text-5xl lg:text-6xl font-bold text-foreground leading-tight">
-            Plan Smarter.{' '}
-            <span className="text-primary">Travel Better.</span>
-          </h1>
-          <p className="mt-6 text-lg text-muted-foreground max-w-2xl mx-auto">
-            TravelLuhh helps you organize your trips, track expenses, and stay on budget
-            — so you can focus on making memories.
-          </p>
-          <div className="mt-10 flex flex-col sm:flex-row items-center justify-center gap-4">
-            <Link to={isAuthenticated ? '/trips' : '/register'}>
-              <Button size="lg" className="text-base px-8">
-                Start Planning Free
-                <ArrowRight className="ml-2 h-5 w-5" />
-              </Button>
-            </Link>
-            <Link to="/login">
-              <Button variant="outline" size="lg" className="text-base px-8">
-                Sign In
-              </Button>
-            </Link>
-          </div>
-        </motion.div>
-      </section>
-
-      {/* Features Section */}
-      <section className="container mx-auto px-4 py-20 border-t border-border">
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          whileInView={{ opacity: 1, y: 0 }}
-          viewport={{ once: true }}
-          transition={{ duration: 0.5 }}
-          className="text-center mb-16"
-        >
-          <h2 className="font-display text-3xl font-bold text-foreground">
-            Everything You Need to Travel Smart
-          </h2>
-          <p className="mt-4 text-muted-foreground max-w-xl mx-auto">
-            Simple tools to plan, track, and manage your travel expenses
-          </p>
-        </motion.div>
-
-        <div className="grid gap-8 md:grid-cols-3">
-          {features.map((feature, index) => (
-            <motion.div
-              key={feature.title}
-              initial={{ opacity: 0, y: 20 }}
-              whileInView={{ opacity: 1, y: 0 }}
-              viewport={{ once: true }}
-              transition={{ duration: 0.5, delay: index * 0.1 }}
-              className="text-center p-8 rounded-2xl bg-card border border-border hover:shadow-travelluhh transition-shadow"
-            >
-              <div className="inline-flex h-14 w-14 items-center justify-center rounded-xl bg-primary/10 text-primary mb-5">
-                <feature.icon className="h-7 w-7" />
-              </div>
-              <h3 className="font-display text-xl font-semibold mb-3">
-                {feature.title}
-              </h3>
-              <p className="text-muted-foreground">{feature.description}</p>
-            </motion.div>
-          ))}
-        </div>
-      </section>
-
-      {/* Benefits Section */}
-      <section className="container mx-auto px-4 py-20 border-t border-border">
-        <div className="max-w-4xl mx-auto">
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            whileInView={{ opacity: 1, y: 0 }}
-            viewport={{ once: true }}
-            className="text-center mb-12"
-          >
-            <h2 className="font-display text-3xl font-bold text-foreground">
-              Why Choose TravelLuhh?
-            </h2>
-          </motion.div>
-
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            {benefits.map((benefit, index) => (
-              <motion.div
-                key={benefit}
-                initial={{ opacity: 0, x: -20 }}
-                whileInView={{ opacity: 1, x: 0 }}
-                viewport={{ once: true }}
-                transition={{ duration: 0.4, delay: index * 0.05 }}
-                className="flex items-center gap-3 p-4 rounded-lg bg-muted/50"
-              >
-                <CheckCircle2 className="h-5 w-5 text-success shrink-0" />
-                <span className="font-medium">{benefit}</span>
-              </motion.div>
-            ))}
-          </div>
-        </div>
-      </section>
-
-      {/* CTA Section */}
-      <section className="container mx-auto px-4 py-20 border-t border-border">
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          whileInView={{ opacity: 1, y: 0 }}
-          viewport={{ once: true }}
-          className="max-w-2xl mx-auto text-center"
-        >
-          <h2 className="font-display text-3xl font-bold text-foreground mb-4">
-            Ready to Plan Your Next Adventure?
-          </h2>
-          <p className="text-muted-foreground mb-8">
-            Join TravelLuhh today and take control of your travel budget.
-          </p>
-          <Link to={isAuthenticated ? '/trips' : '/register'}>
-            <Button size="lg" className="text-base px-10">
-              Get Started Free
-              <ArrowRight className="ml-2 h-5 w-5" />
-            </Button>
-          </Link>
-        </motion.div>
-      </section>
-
-      {/* Footer */}
-      <footer className="border-t border-border py-8">
-        <div className="container mx-auto px-4">
-          <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
-            <div className="flex items-center gap-2">
-              <Compass className="h-5 w-5 text-primary" />
-              <span className="font-display font-semibold">TravelLuhh</span>
-            </div>
-            <p className="text-sm text-muted-foreground">
-              © {new Date().getFullYear()} TravelLuhh. All rights reserved.
+      <main id="main">
+        {/* Hero: copy left (5), scene right (7). On phones the scene comes first, above the H1. */}
+        <section aria-labelledby="hero-title" className={`${wrap} grid gap-8 pb-14 pt-4 lg:grid-cols-12 lg:gap-6 lg:pb-24 lg:pt-12`}>
+          <div className="order-2 flex flex-col lg:order-1 lg:col-span-5 lg:justify-center lg:pb-16">
+            <p className="type-overline text-ink-2">A travel fund for people who actually go</p>
+            <h1 id="hero-title" className="type-display-1 mt-3 text-ink">
+              Every trip starts as a <em className="font-medium italic">tabung</em>.
+            </h1>
+            <p className="type-body mt-4 max-w-[44ch] text-ink-2">
+              Set a target, then spend through it on the road. Every ringgit accounted for, in whatever currency you're paying in.
             </p>
+            <div className="mt-8 flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-6">
+              <Button asChild size="lg" className="w-full sm:w-auto">
+                <Link to="/register">Start a tabung</Link>
+              </Button>
+              <Button asChild variant="ghost" size="lg" className="w-full sm:w-auto sm:px-0">
+                <Link to="/login">I already have one</Link>
+              </Button>
+            </div>
           </div>
-        </div>
-      </footer>
+          <HeroDemo className="order-1 lg:order-2 lg:col-span-7" />
+        </section>
+
+        {/* Where did all the ringgit go? */}
+        <section aria-labelledby="passbook-title" className="border-t border-rule">
+          <div className={`${wrap} py-14 lg:py-24`}>
+            <div className="grid gap-4 lg:grid-cols-12 lg:items-end lg:gap-6">
+              <div className="lg:col-span-6">
+                <p className="type-overline text-ink-2">The passbook</p>
+                <h2 id="passbook-title" className="type-display-2 mt-3 text-ink">
+                  Where did all the ringgit go?
+                </h2>
+              </div>
+              <p className="type-body max-w-[52ch] text-ink-2 lg:col-span-5 lg:col-start-8">
+                Every spend prints as a line with the balance after it, like the bank book you had as a kid. Paid ¥ 3,200 for ramen? It's
+                there in yen, and in ringgit at that day's rate.
+              </p>
+            </div>
+            <AnnotatedPassbook className="mt-8 lg:mt-10" />
+          </div>
+        </section>
+
+        {/* The three kinds of trip, as a ruled list. */}
+        <section aria-labelledby="kinds-title" className="border-t border-rule">
+          <div className={`${wrap} grid gap-8 py-14 lg:grid-cols-12 lg:gap-6 lg:py-24`}>
+            <div className="lg:col-span-4">
+              <p className="type-overline text-ink-2">Solo or with the geng</p>
+              <h2 id="kinds-title" className="type-display-2 mt-3 text-ink">
+                Built for the trips you actually take
+              </h2>
+            </div>
+            <div className="lg:col-span-8">
+              <TripKinds />
+            </div>
+          </div>
+        </section>
+
+        {/* Live rates */}
+        <section aria-labelledby="rates-title" className="border-t border-rule">
+          <div className={`${wrap} grid gap-8 py-14 lg:grid-cols-12 lg:gap-6 lg:py-24`}>
+            <div className="lg:col-span-5">
+              <p className="type-overline text-ink-2">Live rates</p>
+              <h2 id="rates-title" className="type-display-3 mt-3 text-ink">
+                What RM 1 buys today
+              </h2>
+              <p className="type-body mt-3 max-w-[44ch] text-ink-2">
+                Pay in yen, baht or won and the ledger converts at the day's rate from Frankfurter, so every ≈ RM means something.
+              </p>
+              <Button asChild className="mt-6 hidden lg:inline-flex">
+                <Link to="/register">Start a tabung</Link>
+              </Button>
+            </div>
+            <LiveRates className="lg:col-span-6 lg:col-start-7" />
+          </div>
+        </section>
+      </main>
+
+      <SiteFooter />
     </div>
   );
 }

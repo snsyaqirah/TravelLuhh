@@ -1,16 +1,24 @@
 package com.travelluhh.entity;
 
 import jakarta.persistence.*;
-import lombok.*;
+import lombok.AllArgsConstructor;
+import lombok.Builder;
+import lombok.Getter;
+import lombok.NoArgsConstructor;
+import lombok.Setter;
+import lombok.ToString;
 
 import java.time.LocalDateTime;
 
+/** Serialized as-is by GET /api/trips/{tripId}/activity, so it has no associations. */
 @Entity
 @Table(name = "trip_activities")
-@Data
+@Getter
+@Setter
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
+@ToString
 public class TripActivity {
 
     @Id
@@ -30,7 +38,7 @@ public class TripActivity {
     @Column(name = "action_type", nullable = false, length = 50)
     private String actionType;
 
-    @Column(nullable = false)
+    @Column(nullable = false, columnDefinition = "TEXT")
     private String description;
 
     @Column(name = "created_at")

@@ -3,25 +3,39 @@ package com.travelluhh.entity;
 import jakarta.persistence.*;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
-import lombok.Data;
+import lombok.Getter;
 import lombok.NoArgsConstructor;
+import lombok.Setter;
+import lombok.ToString;
+import org.hibernate.annotations.Generated;
+import org.hibernate.generator.EventType;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
 
 /**
- * Trip entity representing the trips table in database
+ * Trip entity representing the trips table in database.
+ *
+ * Children (members, expenses, itinerary, packing, notes, fund entries ...) are removed by the
+ * database's ON DELETE CASCADE, so the collections below are mapped without JPA cascade: deleting
+ * a trip is a single DELETE instead of Hibernate loading and deleting every child row.
  */
 @Entity
 @Table(name = "trips")
-@Data
+@Getter
+@Setter
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
+@ToString(exclude = {"owner", "members", "expenses"})
 public class Trip {
+
+    public static final Set<String> BUDGET_TYPES = Set.of("solo", "shared", "separated");
+    public static final Set<String> SEASONS = Set.of("spring", "summer", "autumn", "winter", "tropical");
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -57,12 +71,26 @@ public class Trip {
     @Builder.Default
     private BigDecimal budget = BigDecimal.ZERO;
 
+    /** Maintained by trg_update_trip_spent. Never written from JPA; re-read after insert/update. */
+    @Generated(event = {EventType.INSERT, EventType.UPDATE})
+    @Column(name = "spent_amount", insertable = false, updatable = false, precision = 12, scale = 2)
+    private BigDecimal spentAmount;
+
+    /** GENERATED ALWAYS AS (total_budget - spent_amount) STORED. */
+    @Generated(event = {EventType.INSERT, EventType.UPDATE})
+    @Column(name = "remaining_budget", insertable = false, updatable = false, precision = 12, scale = 2)
+    private BigDecimal remainingBudget;
+
     @Column(length = 3)
     private String currency;
 
     @Column(name = "budget_type", length = 20)
     @Builder.Default
-    private String budgetType = "per_person";
+    private String budgetType = "solo";
+
+    /** spring | summer | autumn | winter | tropical, or null. CHECK chk_trips_season. */
+    @Column(length = 20)
+    private String season;
 
     @Column(columnDefinition = "TEXT")
     private String notes;
@@ -82,11 +110,11 @@ public class Trip {
     @Column(name = "updated_at")
     private LocalDateTime updatedAt;
 
-    @OneToMany(mappedBy = "trip", cascade = CascadeType.ALL, orphanRemoval = true)
+    @OneToMany(mappedBy = "trip")
     @Builder.Default
     private List<TripMember> members = new ArrayList<>();
 
-    @OneToMany(mappedBy = "trip", cascade = CascadeType.ALL, orphanRemoval = true)
+    @OneToMany(mappedBy = "trip")
     @Builder.Default
     private List<Expense> expenses = new ArrayList<>();
 

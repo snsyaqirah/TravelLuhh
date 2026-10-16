@@ -1,91 +1,102 @@
 import { api } from '@/lib/axios';
-import { User } from '@/types';
+import { clearSession, saveSession } from '@/lib/session';
+import type { LoginResponse, MessageResponse } from '@/types';
 
-export interface AuthResponse {
-  accessToken: string;
-  refreshToken: string;
-  expiresIn: number;
-  user: User;
-}
+/** @deprecated Use LoginResponse from '@/types'. */
+export type AuthResponse = LoginResponse;
+
+export type VerifyPurpose = 'signup' | 'forgot_password';
 
 export const authService = {
-  // ── Email signup (3 steps) ────────────────────────────────────────────────
-
-  async initiateSignup(email: string): Promise<{ message: string }> {
-    const response = await api.post('/auth/initiate-signup', { email });
-    return response.data;
+  // Email signup: initiate → verify code → complete.
+  async initiateSignup(email: string): Promise<MessageResponse> {
+    const res = await api.post<MessageResponse>('/auth/initiate-signup', { email });
+    return res.data;
   },
 
   async verifyEmail(
     email: string,
     code: string,
-    purpose: 'signup' | 'forgot_password'
+    purpose: VerifyPurpose
   ): Promise<{ verificationToken: string; message: string }> {
-    const response = await api.post('/auth/verify-email', { email, code, purpose });
-    return response.data;
+    const res = await api.post<{ verificationToken: string; message: string }>('/auth/verify-email', {
+      email,
+      code,
+      purpose,
+    });
+    return res.data;
   },
 
   async completeSignup(
     verificationToken: string,
     name: string,
-    password: string
-  ): Promise<AuthResponse> {
-    const response = await api.post('/auth/complete-signup', {
+    password: string,
+    profile: { country?: string; currency?: string } = {}
+  ): Promise<LoginResponse> {
+    const res = await api.post<LoginResponse>('/auth/complete-signup', {
       verificationToken,
       name,
       password,
+      ...profile,
     });
-    return response.data;
+    return res.data;
   },
 
-  // ── Login ─────────────────────────────────────────────────────────────────
-
-  async login(email: string, password: string): Promise<AuthResponse> {
-    const response = await api.post<AuthResponse>('/auth/login', { email, password });
-    return response.data;
+  async login(email: string, password: string): Promise<LoginResponse> {
+    const res = await api.post<LoginResponse>('/auth/login', { email, password });
+    return res.data;
   },
 
-  // ── Forgot password (3 steps) ─────────────────────────────────────────────
-
-  async forgotPassword(email: string): Promise<{ message: string }> {
-    const response = await api.post('/auth/forgot-password', { email });
-    return response.data;
+  // Forgot password: request code → verify (purpose forgot_password) → reset with the verification token.
+  async forgotPassword(email: string): Promise<MessageResponse> {
+    const res = await api.post<MessageResponse>('/auth/forgot-password', { email });
+    return res.data;
   },
 
-  async resetPassword(
-    email: string,
-    verificationToken: string,
-    newPassword: string
-  ): Promise<{ message: string }> {
-    const response = await api.post('/auth/reset-password', {
+  async resetPassword(email: string, verificationToken: string, newPassword: string): Promise<MessageResponse> {
+    const res = await api.post<MessageResponse>('/auth/reset-password', {
       email,
       verificationToken,
       newPassword,
     });
-    return response.data;
+    return res.data;
   },
 
-  // ── Token refresh ─────────────────────────────────────────────────────────
-
-  async refreshToken(refreshToken: string): Promise<AuthResponse> {
-    const response = await api.post<AuthResponse>('/auth/refresh', null, {
+  /** Rotates the refresh token. Prefer refreshSession() from lib/axios, which is single-flight. */
+  async refreshToken(refreshToken: string): Promise<LoginResponse> {
+    const res = await api.post<LoginResponse>('/auth/refresh', null, {
       headers: { Authorization: `Bearer ${refreshToken}` },
     });
-    return response.data;
+    return res.data;
   },
 
-  // ── Storage helpers ───────────────────────────────────────────────────────
-
-  saveSession(response: AuthResponse) {
-    localStorage.setItem('travelluhh_token', response.accessToken);
-    localStorage.setItem('travelluhh_refresh_token', response.refreshToken);
-    localStorage.setItem('travelluhh_user', JSON.stringify(response.user));
+  /** Revokes the refresh token server-side. Best effort: never throws. */
+  async logout(refreshToken: string | null): Promise<void> {
+    if (!refreshToken) return;
+    try {
+      await api.post('/auth/logout', null, {
+        headers: { Authorization: `Bearer ${refreshToken}` },
+        timeout: 5000,
+      });
+    } catch {
+      // the token expires on its own; nothing useful to tell the person
+    }
   },
 
-  clearSession() {
-    localStorage.removeItem('travelluhh_token');
-    localStorage.removeItem('travelluhh_refresh_token');
-    localStorage.removeItem('travelluhh_user');
-    localStorage.removeItem('travelluhh_onboarding_completed');
+  async health(): Promise<boolean> {
+    try {
+      await api.get('/auth/health', { timeout: 5000 });
+      return true;
+    } catch {
+      return false;
+    }
+  },
+
+  saveSession(response: LoginResponse): void {
+    saveSession(response);
+  },
+
+  clearSession(): void {
+    clearSession();
   },
 };

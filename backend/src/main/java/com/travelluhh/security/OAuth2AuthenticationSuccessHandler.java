@@ -1,10 +1,10 @@
 package com.travelluhh.security;
 
+import com.travelluhh.dto.auth.LoginResponse;
 import com.travelluhh.entity.User;
-import com.travelluhh.util.JwtUtil;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
-import lombok.RequiredArgsConstructor;
+import jakarta.servlet.http.HttpSession;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.security.core.Authentication;
@@ -14,36 +14,57 @@ import org.springframework.web.util.UriComponentsBuilder;
 
 import java.io.IOException;
 
+/**
+ * After Google sign-in: issue a session (refresh token persisted like any other login) and hand it to the SPA
+ * at {@code {frontend}/auth/callback?token=…&refresh=…&newUser=true|false}.
+ * The parameter names are the ones OAuthCallback.tsx reads.
+ */
 @Slf4j
 @Component
-@RequiredArgsConstructor
 public class OAuth2AuthenticationSuccessHandler extends SimpleUrlAuthenticationSuccessHandler {
 
-    private final JwtUtil jwtUtil;
+    private final TokenService tokenService;
+    private final String frontendUrl;
 
-    @Value("${app.frontend.url}")
-    private String frontendUrl;
+    public OAuth2AuthenticationSuccessHandler(
+            TokenService tokenService,
+            @Value("${app.frontend.url:http://localhost:5173}") String frontendUrl) {
+        this.tokenService = tokenService;
+        this.frontendUrl = stripTrailingSlash(frontendUrl);
+    }
 
     @Override
     public void onAuthenticationSuccess(HttpServletRequest request,
                                         HttpServletResponse response,
                                         Authentication authentication) throws IOException {
-
-        OAuth2UserPrincipal principal = (OAuth2UserPrincipal) authentication.getPrincipal();
+        if (!(authentication.getPrincipal() instanceof OAuth2UserPrincipal principal)) {
+            log.warn("OAuth2 success with an unexpected principal type; sending the user back to login");
+            getRedirectStrategy().sendRedirect(request, response, frontendUrl + "/login?error=oauth");
+            return;
+        }
         User user = principal.getUser();
-
-        String accessToken  = jwtUtil.generateToken(user);
-        String refreshToken = jwtUtil.generateRefreshToken(user);
-        boolean isNewUser   = !Boolean.TRUE.equals(user.getOnboardingCompleted());
+        LoginResponse session = tokenService.issueSession(user);
+        boolean isNewUser = !Boolean.TRUE.equals(user.getOnboardingCompleted());
 
         String redirectUrl = UriComponentsBuilder
                 .fromUriString(frontendUrl + "/auth/callback")
-                .queryParam("token", accessToken)
-                .queryParam("refresh", refreshToken)
+                .queryParam("token", session.getAccessToken())
+                .queryParam("refresh", session.getRefreshToken())
                 .queryParam("newUser", isNewUser)
-                .build().toUriString();
+                .build()
+                .encode()
+                .toUriString();
 
-        log.info("OAuth2 success — redirecting to frontend for user: {}", user.getEmail());
+        // The HTTP session only existed to carry the OAuth state parameter; nothing else should live in it.
+        HttpSession httpSession = request.getSession(false);
+        if (httpSession != null) {
+            httpSession.invalidate();
+        }
+        log.info("Google sign-in for user {}", user.getId());
         getRedirectStrategy().sendRedirect(request, response, redirectUrl);
+    }
+
+    static String stripTrailingSlash(String url) {
+        return url != null && url.endsWith("/") ? url.substring(0, url.length() - 1) : url;
     }
 }

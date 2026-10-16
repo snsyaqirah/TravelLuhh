@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="none">
+  <title>TravelLuhh</title>
+  <style>
+    .s{stroke:#1D2420}.b{fill:#FBF8F1}.f{fill:#17583F}.c{stroke:#FBF8F1}
+    @media (prefers-color-scheme:dark){.s{stroke:#EFE8D8}.b{fill:#1A221E}.f{fill:#63C29A}.c{stroke:#0E1A14}}
+  </style>
+  <g stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+    <path class="b s" d="M3.42 14.95 A6.58 3.8 0 0 0 16.58 14.95 L16.58 7.43 C16.58 6.35 14.74 6.35 14.74 5.6 L14.74 3.99 A4.74 2.74 0 0 0 5.26 3.99 L5.26 5.6 C5.26 6.35 3.42 6.35 3.42 7.43 Z"/>
+    <path class="s" d="M5.26 5.6 A4.74 2.74 0 0 0 14.74 5.6 M3.42 11.73 A6.58 3.8 0 0 0 16.58 11.73"/>
+    <path class="f s" d="M5.26 3.99 A4.74 2.74 0 0 0 14.74 3.99 A4.74 2.74 0 0 0 5.26 3.99 Z"/>
+    <path class="c" d="M8.14 2.91 L11.86 5.06"/>
+  </g>
+</svg>

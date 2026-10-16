@@ -1,0 +1,20 @@
+// The procedural primitive library (§7.6). Lazy 3D chunk only: every export here pulls in three.js.
+export { Plinth, type PlinthProps } from '@/iso/primitives/Plinth';
+export { HardShadow, SHADOW_Y, type HardShadowProps } from '@/iso/primitives/HardShadow';
+export { CoinPile, type CoinPileProps } from '@/iso/primitives/CoinPile';
+export { CoinFlight, type CoinFlightProps } from '@/iso/primitives/CoinFlight';
+export { CoinInstances, CoinStack, type CoinInstancesProps, type CoinStackProps } from '@/iso/primitives/CoinStack';
+export { Balang, type BalangProps } from '@/iso/primitives/Balang';
+export { DayStones, type DayStone, type DayStonesProps } from '@/iso/primitives/DayStones';
+export { Pennant, type PennantProps } from '@/iso/primitives/Pennant';
+export { Signpost, type SignpostProps } from '@/iso/primitives/Signpost';
+export { CategoryBlock, CategoryProp, type CategoryBlockProps, type CategoryPropProps } from '@/iso/primitives/CategoryBlock';
+export { Suitcase, type SuitcaseProps } from '@/iso/primitives/Suitcase';
+export { PackedItems, type PackedItem } from '@/iso/primitives/PackedItems';
+export { IOUSlip, type IOUSlipProps } from '@/iso/primitives/IOUSlip';
+export { Shelf, type ShelfProps } from '@/iso/primitives/Shelf';
+export { KampungHouse, type KampungHouseProps } from '@/iso/primitives/KampungHouse';
+export { Road, type RoadProps } from '@/iso/primitives/Road';
+export { Ghost, GhostBox, GhostJar, DashedLines, type GhostProps } from '@/iso/primitives/Ghost';
+export { IsoEdges, type IsoEdgesProps } from '@/iso/primitives/Edges';
+export * as isoGeometry from '@/iso/primitives/geometries';

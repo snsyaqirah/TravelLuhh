@@ -1,5 +1,6 @@
 package com.travelluhh.dto.itinerary;
 
+import com.travelluhh.entity.ItineraryItem;
 import lombok.*;
 
 import java.time.LocalDate;
@@ -23,4 +24,21 @@ public class ItineraryItemResponse {
     private Integer sortOrder;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
+
+    public static ItineraryItemResponse of(ItineraryItem item) {
+        return ItineraryItemResponse.builder()
+                .id(item.getId())
+                .tripId(item.getTripId())
+                .itemDate(item.getItemDate())
+                .startTime(item.getStartTime())
+                .endTime(item.getEndTime())
+                .title(item.getTitle())
+                .description(item.getDescription())
+                .location(item.getLocation())
+                .category(item.getCategory())
+                .sortOrder(item.getSortOrder())
+                .createdAt(item.getCreatedAt())
+                .updatedAt(item.getUpdatedAt())
+                .build();
+    }
 }

@@ -1,236 +1,168 @@
-import { useState, useEffect } from 'react';
-import { Link, useNavigate, useLocation } from 'react-router-dom';
+// Log in (§9.2): email + password, inline errors straight from the server ("Email or password is incorrect.",
+// the Google-only account sentence), Continue with Google, and ?next / ?error=oauth handling.
+import { useRef, useState, type FormEvent } from 'react';
+import { Link, Navigate, useLocation, useSearchParams } from 'react-router-dom';
 import { useAuth } from '@/context/AuthContext';
+import { getErrorMessage } from '@/lib/axios';
+import { safeNextPath } from '@/lib/session';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
-import { useToast } from '@/hooks/use-toast';
-import { Compass, Loader2, Mail, Lock, Eye, EyeOff } from 'lucide-react';
-import { motion } from 'framer-motion';
+import { NoticeSlip } from '@/components/motifs/NoticeSlip';
+import { GoogleLoginButton } from '@/components/auth/GoogleLoginButton';
+import { AuthShell } from '@/components/frontdoor/AuthShell';
+import { Field, FormAlert, PasswordInput } from '@/components/frontdoor/fields';
+import { describedBy } from '@/components/frontdoor/fieldIds';
+import { OrDivider } from '@/components/frontdoor/OrDivider';
+import { isEmail } from '@/components/frontdoor/authHelpers';
+
+interface LoginState {
+  email?: string;
+  from?: { pathname?: string; search?: string };
+  notice?: string;
+}
+
+const OAUTH_ERRORS = new Set(['oauth', 'oauth_failed']);
 
 export default function Login() {
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [showPassword, setShowPassword] = useState(false);
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const [errors, setErrors] = useState<{ email?: string; password?: string }>({});
-
-  const { login, loginWithGoogle, isAuthenticated } = useAuth();
-  const navigate = useNavigate();
+  const { login, isAuthenticated } = useAuth();
+  const [params, setParams] = useSearchParams();
   const location = useLocation();
-  const { toast } = useToast();
+  const state = (location.state ?? {}) as LoginState;
 
-  const from = (location.state as { from?: { pathname: string } })?.from?.pathname || '/dashboard';
+  const fromState = state.from?.pathname ? `${state.from.pathname}${state.from.search ?? ''}` : null;
+  const next = safeNextPath(params.get('next') ?? fromState);
+  const oauthFailed = OAUTH_ERRORS.has(params.get('error') ?? '');
 
-  // Redirect if already logged in
-  useEffect(() => {
-    if (isAuthenticated) {
-      navigate('/dashboard', { replace: true });
-    }
-  }, [isAuthenticated, navigate]);
+  const [email, setEmail] = useState(state.email ?? '');
+  const [password, setPassword] = useState('');
+  const [errors, setErrors] = useState<{ email?: string; password?: string }>({});
+  const [formError, setFormError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+  const emailRef = useRef<HTMLInputElement>(null);
+  const passwordRef = useRef<HTMLInputElement>(null);
 
-  const validate = () => {
-    const newErrors: { email?: string; password?: string } = {};
-    
-    if (!email) {
-      newErrors.email = 'Email is required';
-    } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-      newErrors.email = 'Please enter a valid email';
-    }
-    
-    if (!password) {
-      newErrors.password = 'Password is required';
-    }
+  if (isAuthenticated) return <Navigate to={next} replace />;
 
-    setErrors(newErrors);
-    return Object.keys(newErrors).length === 0;
+  const dismissOAuth = () => {
+    const p = new URLSearchParams(params);
+    p.delete('error');
+    setParams(p, { replace: true });
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const onSubmit = async (e: FormEvent) => {
     e.preventDefault();
-    
-    if (!validate()) return;
+    setFormError(null);
+    const found: typeof errors = {};
+    if (!email.trim()) found.email = 'Enter your email.';
+    else if (!isEmail(email)) found.email = "That doesn't look like an email address.";
+    if (!password) found.password = 'Enter your password.';
+    setErrors(found);
+    if (found.email) return emailRef.current?.focus();
+    if (found.password) return passwordRef.current?.focus();
 
-    setIsSubmitting(true);
+    setSubmitting(true);
     try {
       await login(email, password);
-      toast({
-        title: 'Welcome back!',
-        description: 'You have successfully logged in.',
-      });
-      navigate(from, { replace: true });
-    } catch (error) {
-      toast({
-        variant: 'destructive',
-        title: 'Login failed',
-        description: 'Invalid email or password. Please try again.',
-      });
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
-
-  const handleGoogleLogin = async () => {
-    setIsSubmitting(true);
-    try {
-      await loginWithGoogle();
-      navigate(from, { replace: true });
-    } catch (error) {
-      toast({
-        variant: 'destructive',
-        title: 'Google login failed',
-        description: 'Could not sign in with Google. Please try again.',
-      });
-    } finally {
-      setIsSubmitting(false);
+      // isAuthenticated flips and <Navigate> above takes over.
+    } catch (err) {
+      setFormError(getErrorMessage(err, "That didn't work. Try again in a moment."));
+      setSubmitting(false);
     }
   };
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-background px-4">
-      <motion.div
-        initial={{ opacity: 0, y: 20 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.4 }}
-        className="w-full max-w-md"
-      >
-        {/* Logo */}
-        <div className="mb-8 text-center">
-          <Link to="/" className="inline-flex items-center gap-2">
-            <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-primary text-primary-foreground">
-              <Compass className="h-7 w-7" />
-            </div>
-            <span className="font-display text-2xl font-bold text-foreground">
-              TravelLuhh
-            </span>
-          </Link>
-        </div>
+    <AuthShell line="Welcome back. Your tabung's where you left it." caseTag="KUL">
+      <h1 className="type-display-2 text-ink">Log in</h1>
+      <p className="type-body mt-2 text-ink-2">
+        New here?{' '}
+        <Link to="/register" className="text-ink underline decoration-rule-strong underline-offset-[3px] hover:decoration-ink">
+          Start a tabung
+        </Link>
+      </p>
 
-        <Card className="border-border shadow-travelluhh">
-          <CardHeader className="space-y-1 text-center">
-            <CardTitle className="font-display text-2xl">Welcome back</CardTitle>
-            <CardDescription>
-              Sign in to your account to continue planning your adventures
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <form onSubmit={handleSubmit} className="space-y-4">
-              <div className="space-y-2">
-                <Label htmlFor="email">Email</Label>
-                <div className="relative">
-                  <Mail className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                  <Input
-                    id="email"
-                    type="email"
-                    placeholder="you@example.com"
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    className={`pl-10 ${errors.email ? 'border-destructive' : ''}`}
-                  />
-                </div>
-                {errors.email && (
-                  <p className="text-sm text-destructive">{errors.email}</p>
-                )}
-              </div>
+      {oauthFailed ? (
+        <NoticeSlip level="warn" onDismiss={dismissOAuth} className="mt-6">
+          Google sign-in didn't finish. Try again, or log in with your email and password.
+        </NoticeSlip>
+      ) : null}
+      {state.notice ? (
+        <FormAlert tone="info" className="mt-6">
+          {state.notice}
+        </FormAlert>
+      ) : null}
 
-              <div className="space-y-2">
-                <div className="flex items-center justify-between">
-                  <Label htmlFor="password">Password</Label>
+      <form noValidate onSubmit={onSubmit} className="mt-8 flex flex-col gap-5" aria-describedby={formError ? 'login-error' : undefined}>
+        <Field id="login-email" label="Email" error={errors.email}>
+          <Input
+            ref={emailRef}
+            id="login-email"
+            type="email"
+            inputMode="email"
+            autoComplete="email"
+            autoCapitalize="none"
+            spellCheck={false}
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            aria-invalid={errors.email ? true : undefined}
+            aria-describedby={describedBy('login-email', errors.email)}
+          />
+        </Field>
+
+        <Field
+          id="login-password"
+          label="Password"
+          error={errors.password}
+          aside={
+            <Link
+              to="/forgot-password"
+              state={{ email }}
+              className="type-body-s -my-3 inline-flex min-h-11 items-center text-ink-2 underline decoration-rule-strong underline-offset-[3px] hover:text-ink hover:decoration-ink"
+            >
+              Forgot password?
+            </Link>
+          }
+        >
+          <PasswordInput
+            ref={passwordRef}
+            id="login-password"
+            autoComplete="current-password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            invalid={Boolean(errors.password)}
+            aria-describedby={describedBy('login-password', errors.password)}
+          />
+        </Field>
+
+        {formError ? (
+          <div id="login-error">
+            <FormAlert
+              action={
+                // Google-only accounts: the server suggests adding a password through reset.
+                /google/i.test(formError) ? (
                   <Link
                     to="/forgot-password"
-                    className="text-xs text-primary hover:underline"
+                    state={{ email }}
+                    className="text-ink underline decoration-rule-strong underline-offset-[3px] hover:decoration-ink"
                   >
-                    Forgot password?
+                    Add a password
                   </Link>
-                </div>
-                <div className="relative">
-                  <Lock className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                  <Input
-                    id="password"
-                    type={showPassword ? 'text' : 'password'}
-                    placeholder="••••••••"
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    className={`pl-10 pr-10 ${errors.password ? 'border-destructive' : ''}`}
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setShowPassword(!showPassword)}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
-                  >
-                    {showPassword ? (
-                      <EyeOff className="h-4 w-4" />
-                    ) : (
-                      <Eye className="h-4 w-4" />
-                    )}
-                  </button>
-                </div>
-                {errors.password && (
-                  <p className="text-sm text-destructive">{errors.password}</p>
-                )}
-              </div>
-
-              <Button type="submit" className="w-full" disabled={isSubmitting}>
-                {isSubmitting ? (
-                  <>
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    Signing in...
-                  </>
-                ) : (
-                  'Sign In'
-                )}
-              </Button>
-            </form>
-
-            <div className="relative my-6">
-              <div className="absolute inset-0 flex items-center">
-                <div className="w-full border-t border-border" />
-              </div>
-              <div className="relative flex justify-center text-xs uppercase">
-                <span className="bg-card px-2 text-muted-foreground">Or continue with</span>
-              </div>
-            </div>
-
-            {/* Google OAuth Button (Optional) */}
-            <Button
-              type="button"
-              variant="outline"
-              className="w-full"
-              onClick={handleGoogleLogin}
-              disabled={isSubmitting}
+                ) : null
+              }
             >
-              <svg className="mr-2 h-4 w-4" viewBox="0 0 24 24">
-                <path
-                  fill="currentColor"
-                  d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
-                />
-                <path
-                  fill="currentColor"
-                  d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
-                />
-                <path
-                  fill="currentColor"
-                  d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"
-                />
-                <path
-                  fill="currentColor"
-                  d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"
-                />
-              </svg>
-              Continue with Google
-            </Button>
-          </CardContent>
-          <CardFooter className="flex justify-center">
-            <p className="text-sm text-muted-foreground">
-              Don't have an account?{' '}
-              <Link to="/register" className="text-primary font-medium hover:underline">
-                Sign up
-              </Link>
-            </p>
-          </CardFooter>
-        </Card>
-      </motion.div>
-    </div>
+              {formError}
+            </FormAlert>
+          </div>
+        ) : null}
+
+        <Button type="submit" size="lg" className="w-full" disabled={submitting}>
+          {submitting ? 'Logging in…' : 'Log in'}
+        </Button>
+      </form>
+
+      <div className="mt-6 flex flex-col gap-6">
+        <OrDivider />
+        <GoogleLoginButton next={next} disabled={submitting} />
+      </div>
+    </AuthShell>
   );
 }

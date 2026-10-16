@@ -1,36 +1,16 @@
-import { useState } from 'react';
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog';
+// First Google sign-in: a passport data page that asks for home country and home currency (§9.2). It can't be
+// dismissed (every total needs a home currency), so both fields start filled: Malaysia and ringgit, or whatever
+// the account already has. One tap on Save is enough.
+import { useMemo, useState, type FormEvent } from 'react';
+import * as DialogPrimitive from '@radix-ui/react-dialog';
+import { DialogOverlay, DialogPortal } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
-import { Label } from '@/components/ui/label';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from '@/components/ui/popover';
-import {
-  Command,
-  CommandEmpty,
-  CommandGroup,
-  CommandInput,
-  CommandItem,
-  CommandList,
-} from '@/components/ui/command';
-import { countries, currencies } from '@/data/countries';
-import { Globe, Coins, Loader2, ArrowRight, Check, ChevronsUpDown } from 'lucide-react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { useAuth } from '@/context/AuthContext';
+import { getErrorMessage } from '@/lib/axios';
+import { Field, FormAlert } from '@/components/frontdoor/fields';
+import { CountryPicker, CurrencySelect } from '@/components/frontdoor/HomeFields';
+import { currencyForCountry, initials } from '@/components/frontdoor/authHelpers';
+import { getCountryByCode } from '@/data/countries';
 import { cn } from '@/lib/utils';
 
 interface OnboardingModalProps {
@@ -38,255 +18,163 @@ interface OnboardingModalProps {
   onComplete: (data: { country: string; currency: string }) => Promise<void>;
 }
 
-export function OnboardingModal({ open, onComplete }: OnboardingModalProps) {
-  const [step, setStep] = useState(1);
-  const [country, setCountry] = useState('');
-  const [currency, setCurrency] = useState('');
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const [countryOpen, setCountryOpen] = useState(false);
-  const [currencyOpen, setCurrencyOpen] = useState(false);
-
-  // Auto-set currency when country changes
-  const handleCountryChange = (value: string) => {
-    setCountry(value);
-    const selectedCountry = countries.find((c) => c.code === value);
-    if (selectedCountry) {
-      setCurrency(selectedCountry.currency);
-    }
+/** The machine-readable line along the bottom of a passport page. Decorative. */
+function mrzLine(name: string, country: string): string {
+  const iso3: Record<string, string> = {
+    MY: 'MYS',
+    SG: 'SGP',
+    ID: 'IDN',
+    TH: 'THA',
+    BN: 'BRN',
+    PH: 'PHL',
+    VN: 'VNM',
+    JP: 'JPN',
+    KR: 'KOR',
+    GB: 'GBR',
+    US: 'USA',
+    AU: 'AUS',
   };
+  const code = iso3[country] ?? `${country}<`.slice(0, 3);
+  const parts = name
+    .toUpperCase()
+    .normalize('NFD')
+    .replace(/[^A-Z\s]/g, '')
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+  const surname = parts.length > 1 ? parts[parts.length - 1] : (parts[0] ?? '');
+  const given = parts.length > 1 ? parts.slice(0, -1).join('<') : '';
+  return `P<${code}${surname}<<${given}`.padEnd(44, '<').slice(0, 44);
+}
 
-  const handleNext = () => {
-    if (step === 1 && country) {
-      setStep(2);
-    }
-  };
-
-  const handleComplete = async () => {
-    if (!country || !currency) return;
-
-    setIsSubmitting(true);
-    try {
-      await onComplete({ country, currency });
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
-
-  const selectedCountryData = countries.find((c) => c.code === country);
-
+function PhotoBox({ name, avatar }: { name: string; avatar?: string | null }) {
+  const [broken, setBroken] = useState(false);
+  const corner = 'pointer-events-none absolute h-2.5 w-2.5 border-ink-2';
   return (
-    <Dialog open={open} onOpenChange={() => {}}>
-      <DialogContent
-        className="sm:max-w-md"
-        onPointerDownOutside={(e) => e.preventDefault()}
-        onEscapeKeyDown={(e) => e.preventDefault()}
-      >
-        <DialogHeader>
-          <DialogTitle className="font-display text-xl">
-            Welcome to TravelLuhh! 🌍
-          </DialogTitle>
-          <DialogDescription>
-            Let's personalize your experience. This only takes a moment.
-          </DialogDescription>
-        </DialogHeader>
-
-        {/* Progress indicator */}
-        <div className="flex gap-2 mb-4">
-          <div
-            className={`h-1.5 flex-1 rounded-full transition-colors ${
-              step >= 1 ? 'bg-primary' : 'bg-muted'
-            }`}
+    <div className="relative h-16 w-16 shrink-0 sm:h-[88px] sm:w-[88px]">
+      <div className="absolute inset-1 flex items-center justify-center overflow-hidden bg-sunken">
+        {avatar && !broken ? (
+          <img
+            src={avatar}
+            alt=""
+            referrerPolicy="no-referrer"
+            className="h-full w-full object-cover grayscale-[30%]"
+            onError={() => setBroken(true)}
           />
-          <div
-            className={`h-1.5 flex-1 rounded-full transition-colors ${
-              step >= 2 ? 'bg-primary' : 'bg-muted'
-            }`}
-          />
-        </div>
-
-        <AnimatePresence mode="wait">
-          {step === 1 && (
-            <motion.div
-              key="step1"
-              initial={{ opacity: 0, x: 20 }}
-              animate={{ opacity: 1, x: 0 }}
-              exit={{ opacity: 0, x: -20 }}
-              transition={{ duration: 0.2 }}
-              className="space-y-4"
-            >
-              <div className="flex items-center gap-3 p-3 rounded-lg bg-primary/10 text-primary">
-                <Globe className="h-5 w-5" />
-                <span className="text-sm font-medium">
-                  Where are you based?
-                </span>
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="country">Your Country</Label>
-                <p className="text-xs text-muted-foreground mb-2">
-                  Click to search and select
-                </p>
-                <Popover open={countryOpen} onOpenChange={setCountryOpen}>
-                  <PopoverTrigger asChild>
-                    <Button
-                      variant="outline"
-                      role="combobox"
-                      aria-expanded={countryOpen}
-                      className="w-full justify-between"
-                    >
-                      {country
-                        ? countries.find((c) => c.code === country)?.name
-                        : "Select your country"}
-                      <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
-                    </Button>
-                  </PopoverTrigger>
-                  <PopoverContent className="w-[400px] p-0" align="start">
-                    <Command>
-                      <CommandInput placeholder="Search country..." />
-                      <CommandList>
-                        <CommandEmpty>No country found.</CommandEmpty>
-                        <CommandGroup>
-                          {countries.map((c) => (
-                            <CommandItem
-                              key={c.code}
-                              value={c.name}
-                              onSelect={() => {
-                                handleCountryChange(c.code);
-                                setCountryOpen(false);
-                              }}
-                            >
-                              <Check
-                                className={cn(
-                                  "mr-2 h-4 w-4",
-                                  country === c.code ? "opacity-100" : "opacity-0"
-                                )}
-                              />
-                              {c.name}
-                            </CommandItem>
-                          ))}
-                        </CommandGroup>
-                      </CommandList>
-                    </Command>
-                  </PopoverContent>
-                </Popover>
-                <p className="text-xs text-muted-foreground">
-                  This helps us suggest relevant currencies and destinations.
-                </p>
-              </div>
-
-              <Button
-                onClick={handleNext}
-                disabled={!country}
-                className="w-full"
-              >
-                Continue
-                <ArrowRight className="ml-2 h-4 w-4" />
-              </Button>
-            </motion.div>
-          )}
-
-          {step === 2 && (
-            <motion.div
-              key="step2"
-              initial={{ opacity: 0, x: 20 }}
-              animate={{ opacity: 1, x: 0 }}
-              exit={{ opacity: 0, x: -20 }}
-              transition={{ duration: 0.2 }}
-              className="space-y-4"
-            >
-              <div className="flex items-center gap-3 p-3 rounded-lg bg-primary/10 text-primary">
-                <Coins className="h-5 w-5" />
-                <span className="text-sm font-medium">
-                  What currency do you use?
-                </span>
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="currency">Preferred Currency</Label>
-                <p className="text-xs text-muted-foreground mb-2">
-                  Auto-filled, click to change
-                </p>
-                <Popover open={currencyOpen} onOpenChange={setCurrencyOpen}>
-                  <PopoverTrigger asChild>
-                    <Button
-                      variant="outline"
-                      role="combobox"
-                      aria-expanded={currencyOpen}
-                      className="w-full justify-between"
-                    >
-                      {currency
-                        ? (() => {
-                            const curr = currencies.find((c) => c.code === currency);
-                            return curr ? `${curr.symbol} ${curr.code}` : currency;
-                          })()
-                        : "Select your currency"}
-                      <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
-                    </Button>
-                  </PopoverTrigger>
-                  <PopoverContent className="w-[350px] p-0" align="start">
-                    <Command>
-                      <CommandInput placeholder="Search currency..." />
-                      <CommandList>
-                        <CommandEmpty>No currency found.</CommandEmpty>
-                        <CommandGroup>
-                          {currencies.map((c) => (
-                            <CommandItem
-                              key={c.code}
-                              value={`${c.code} ${c.name}`}
-                              onSelect={() => {
-                                setCurrency(c.code);
-                                setCurrencyOpen(false);
-                              }}
-                            >
-                              <Check
-                                className={cn(
-                                  "mr-2 h-4 w-4",
-                                  currency === c.code ? "opacity-100" : "opacity-0"
-                                )}
-                              />
-                              {c.symbol} {c.code} - {c.name}
-                            </CommandItem>
-                          ))}
-                        </CommandGroup>
-                      </CommandList>
-                    </Command>
-                  </PopoverContent>
-                </Popover>
-                {selectedCountryData && (
-                  <p className="text-xs text-muted-foreground">
-                    Based on {selectedCountryData.name}, we've suggested{' '}
-                    {selectedCountryData.currency}. Feel free to change it.
-                  </p>
-                )}
-              </div>
-
-              <div className="flex gap-2">
-                <Button
-                  variant="outline"
-                  onClick={() => setStep(1)}
-                  className="flex-1"
-                >
-                  Back
-                </Button>
-                <Button
-                  onClick={handleComplete}
-                  disabled={!currency || isSubmitting}
-                  className="flex-1"
-                >
-                  {isSubmitting ? (
-                    <>
-                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                      Saving...
-                    </>
-                  ) : (
-                    "Let's Go!"
-                  )}
-                </Button>
-              </div>
-            </motion.div>
-          )}
-        </AnimatePresence>
-      </DialogContent>
-    </Dialog>
+        ) : (
+          <span className="font-display text-[26px] font-medium leading-none text-ink-2 sm:text-[34px]">{initials(name) || '··'}</span>
+        )}
+      </div>
+      {/* photo corner mounts */}
+      <span aria-hidden="true" className={cn(corner, 'left-0 top-0 border-l-[1.5px] border-t-[1.5px]')} />
+      <span aria-hidden="true" className={cn(corner, 'right-0 top-0 border-r-[1.5px] border-t-[1.5px]')} />
+      <span aria-hidden="true" className={cn(corner, 'bottom-0 left-0 border-b-[1.5px] border-l-[1.5px]')} />
+      <span aria-hidden="true" className={cn(corner, 'bottom-0 right-0 border-b-[1.5px] border-r-[1.5px]')} />
+    </div>
   );
 }
+
+export function OnboardingModal({ open, onComplete }: OnboardingModalProps) {
+  const { user } = useAuth();
+  const startCountry = user?.country && getCountryByCode(user.country) ? user.country.toUpperCase() : 'MY';
+  const [country, setCountry] = useState(startCountry);
+  const [currency, setCurrency] = useState(() => {
+    const own = user?.currency?.toUpperCase();
+    // Older Google accounts were created with USD as a placeholder; the country is a better guess.
+    if (own && own !== 'USD') return own;
+    return currencyForCountry(startCountry) ?? 'MYR';
+  });
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const name = user?.name?.trim() || '';
+  const mrz = useMemo(() => mrzLine(name || user?.email?.split('@')[0] || '', country), [name, user?.email, country]);
+
+  const onCountry = (code: string) => {
+    setCountry(code);
+    const implied = currencyForCountry(code);
+    if (implied) setCurrency(implied);
+  };
+
+  const onSubmit = async (e: FormEvent) => {
+    e.preventDefault();
+    if (saving) return;
+    setError(null);
+    setSaving(true);
+    try {
+      await onComplete({ country, currency });
+    } catch (err) {
+      setError(getErrorMessage(err, "Your details didn't save. Try again."));
+      setSaving(false);
+    }
+  };
+
+  const keep = (e: Event) => e.preventDefault();
+
+  return (
+    <DialogPrimitive.Root open={open}>
+      <DialogPortal>
+        <DialogOverlay />
+        <DialogPrimitive.Content
+          onEscapeKeyDown={keep}
+          onPointerDownOutside={keep}
+          onInteractOutside={keep}
+          className="fixed inset-0 z-50 m-auto h-fit max-h-[calc(100dvh-2rem)] w-[calc(100%-2rem)] max-w-[520px] overflow-y-auto rounded-lg border border-rule-strong bg-card text-card-foreground shadow-hard duration-ui focus-visible:outline-none data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0"
+        >
+          <div className="flex items-center justify-between gap-3 border-b border-rule bg-sunken px-5 py-2.5">
+            <span className="type-overline text-ink-2">Pasport · Passport</span>
+            <span className="type-overline text-ink-3">TravelLuhh</span>
+          </div>
+
+          <form onSubmit={onSubmit} className="flex flex-col gap-5 px-5 pb-4 pt-5">
+            <div>
+              <DialogPrimitive.Title className="type-display-3 text-ink">Where's home?</DialogPrimitive.Title>
+              <DialogPrimitive.Description className="type-body-s mt-1.5 text-ink-2">
+                Every trip adds up in your home currency, so your totals make sense. You can change both later in Me.
+              </DialogPrimitive.Description>
+            </div>
+
+            <div className="flex items-start gap-4">
+              <PhotoBox name={name} avatar={user?.avatar} />
+              <dl className="grid min-w-0 flex-1 gap-2">
+                <div>
+                  <dt className="type-overline text-ink-3">Nama · Name</dt>
+                  <dd className="type-title truncate text-ink">{name || 'Traveller'}</dd>
+                </div>
+                {user?.email ? (
+                  <div>
+                    <dt className="type-overline text-ink-3">Email</dt>
+                    <dd className="truncate font-mono text-[13px] text-ink-2">{user.email}</dd>
+                  </div>
+                ) : null}
+              </dl>
+            </div>
+
+            <div className="grid grid-cols-1 gap-5 border-t border-dashed border-rule-strong pt-5 sm:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
+              <Field id="onboard-country" label="Home country">
+                <CountryPicker id="onboard-country" value={country} onChange={onCountry} />
+              </Field>
+              <Field id="onboard-currency" label="Home currency">
+                <CurrencySelect id="onboard-currency" value={currency} onChange={setCurrency} />
+              </Field>
+            </div>
+
+            {error ? <FormAlert>{error}</FormAlert> : null}
+
+            <Button type="submit" size="lg" className="w-full" disabled={saving}>
+              {saving ? 'Saving…' : 'Save and continue'}
+            </Button>
+
+            <p
+              aria-hidden="true"
+              className="select-none overflow-hidden whitespace-nowrap border-t border-rule pt-3 font-mono text-[12px] tracking-[0.12em] text-ink-3"
+            >
+              {mrz}
+            </p>
+          </form>
+        </DialogPrimitive.Content>
+      </DialogPortal>
+    </DialogPrimitive.Root>
+  );
+}
+
+export default OnboardingModal;

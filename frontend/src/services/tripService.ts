@@ -1,72 +1,33 @@
 import { api } from '@/lib/axios';
-import { Trip } from '@/types';
+import type { CreateTripRequest, Trip, UpdateTripRequest } from '@/types';
+import { normalizeTrip } from './normalize';
 
-export interface CreateTripRequest {
-  name: string;
-  destinationCountry: string;
-  startDate: string;
-  endDate: string;
-  description?: string;
-  image?: string;
-  budget: number;
-  currency: string;
-  budgetType?: string;
-  notes?: string;
-  status?: 'PLANNED' | 'ONGOING' | 'COMPLETED';
-}
-
-export interface UpdateTripRequest {
-  name?: string;
-  destinationCountry?: string;
-  startDate?: string;
-  endDate?: string;
-  description?: string;
-  image?: string;
-  budget?: number;
-  currency?: string;
-  budgetType?: string;
-  notes?: string;
-  status?: 'PLANNED' | 'ONGOING' | 'COMPLETED';
-  isArchived?: boolean;
-}
+export type { CreateTripRequest, UpdateTripRequest } from '@/types';
 
 export const tripService = {
-  /**
-   * Get all trips for the current user
-   */
-  async getAllTrips(): Promise<Trip[]> {
-    const response = await api.get<Trip[]>('/trips');
-    return response.data;
+  /** Trips the user owns or is a member of. Archived trips only when asked. */
+  async getAllTrips(params: { archived?: boolean } = {}): Promise<Trip[]> {
+    const res = await api.get<Trip[]>('/trips', { params: { archived: params.archived ?? false } });
+    return (res.data ?? []).map(normalizeTrip);
   },
 
-  /**
-   * Get a single trip by ID
-   */
-  async getTripById(tripId: string): Promise<Trip> {
-    const response = await api.get<Trip>(`/trips/${tripId}`);
-    return response.data;
+  async getTripById(tripId: number): Promise<Trip> {
+    const res = await api.get<Trip>(`/trips/${tripId}`);
+    return normalizeTrip(res.data);
   },
 
-  /**
-   * Create a new trip
-   */
   async createTrip(data: CreateTripRequest): Promise<Trip> {
-    const response = await api.post<Trip>('/trips', data);
-    return response.data;
+    const res = await api.post<Trip>('/trips', data);
+    return normalizeTrip(res.data);
   },
 
-  /**
-   * Update an existing trip
-   */
-  async updateTrip(tripId: string, data: UpdateTripRequest): Promise<Trip> {
-    const response = await api.put<Trip>(`/trips/${tripId}`, data);
-    return response.data;
+  /** Partial update; budgetType and isArchived are owner-only. */
+  async updateTrip(tripId: number, data: UpdateTripRequest): Promise<Trip> {
+    const res = await api.put<Trip>(`/trips/${tripId}`, data);
+    return normalizeTrip(res.data);
   },
 
-  /**
-   * Delete a trip
-   */
-  async deleteTrip(tripId: string): Promise<void> {
+  async deleteTrip(tripId: number): Promise<void> {
     await api.delete(`/trips/${tripId}`);
   },
 };

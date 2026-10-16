@@ -1,57 +1,83 @@
-import { useEffect } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+// /auth/callback: the backend's Google success handler lands here with ?token=&refresh=&newUser=. We store
+// the pair, read the real user from /users/me (no JWT decoding), and either open the passport sheet (new or
+// unfinished accounts) or go straight on. Anything wrong → /login?error=oauth_failed.
+import { useEffect, useRef, useState } from 'react';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '@/context/AuthContext';
-import { Compass, Loader2 } from 'lucide-react';
+import { Wordmark } from '@/components/brand/Wordmark';
+import { OnboardingModal } from '@/components/onboarding/OnboardingModal';
+import { StoneHop } from '@/components/frontdoor/StoneHop';
+import { takeOAuthNext } from '@/components/frontdoor/oauthNext';
 
-/**
- * Landing page for Google OAuth redirect.
- * Backend redirects here with: ?token=...&refresh=...&newUser=true/false
- */
+const FAILED = '/login?error=oauth_failed';
+
 export default function OAuthCallback() {
   const [params] = useSearchParams();
-  const { setUserFromSession } = useAuth();
+  const { signInWithTokens, completeOnboarding } = useAuth();
   const navigate = useNavigate();
+  const started = useRef(false);
+  const [phase, setPhase] = useState<'checking' | 'onboarding'>('checking');
+  const [next, setNext] = useState('/home');
 
   useEffect(() => {
+    if (started.current) return;
+    started.current = true;
     const token = params.get('token');
     const refresh = params.get('refresh');
     const newUser = params.get('newUser') === 'true';
-
+    const dest = takeOAuthNext('/home');
+    // Keep the tokens out of the address bar and the history entry.
+    try {
+      window.history.replaceState(window.history.state, '', '/auth/callback');
+    } catch {
+      // not fatal
+    }
     if (!token || !refresh) {
-      navigate('/login?error=oauth_failed', { replace: true });
+      navigate(FAILED, { replace: true });
       return;
     }
-
-    try {
-      // Decode the JWT payload to get user info (no verification needed — backend signed it)
-      const payload = JSON.parse(atob(token.split('.')[1]));
-      const user = {
-        id: payload.sub,
-        email: payload.sub,
-        name: payload.name || '',
-        avatar: payload.avatar || '',
-        authProvider: 'google' as const,
-        onboardingCompleted: !newUser,
-        currency: payload.currency || 'USD',
-        country: payload.country || '',
-      };
-
-      setUserFromSession(user, token, refresh);
-      navigate('/dashboard', { replace: true });
-    } catch {
-      navigate('/login?error=oauth_failed', { replace: true });
-    }
-  }, []);
+    signInWithTokens(token, refresh)
+      .then((user) => {
+        if (newUser || !user.onboardingCompleted) {
+          setNext(dest);
+          setPhase('onboarding');
+        } else {
+          navigate(dest, { replace: true });
+        }
+      })
+      .catch(() => navigate(FAILED, { replace: true }));
+  }, [params, signInWithTokens, navigate]);
 
   return (
-    <div className="flex min-h-screen flex-col items-center justify-center gap-4 bg-background">
-      <div className="flex h-14 w-14 items-center justify-center rounded-xl bg-primary text-primary-foreground">
-        <Compass className="h-8 w-8" />
-      </div>
-      <div className="flex items-center gap-2 text-muted-foreground">
-        <Loader2 className="h-4 w-4 animate-spin" />
-        <span>Signing you in...</span>
-      </div>
+    <div className="flex min-h-dvh flex-col bg-background">
+      <header className="border-b border-rule">
+        <div className="mx-auto flex h-16 max-w-[1168px] items-center px-4 lg:px-6">
+          <Link to="/" className="inline-flex min-h-11 items-center rounded-sm" aria-label="TravelLuhh, front page">
+            <Wordmark size="md" />
+          </Link>
+        </div>
+      </header>
+      <main id="main" className="mx-auto flex w-full max-w-[1168px] flex-1 flex-col justify-center px-4 pb-24 lg:px-6">
+        <div className="max-w-[420px]" role="status" aria-live="polite">
+          <StoneHop className="mb-8" />
+          <p className="type-overline text-ink-2">Google · {phase === 'checking' ? 'Boarding' : 'Checked in'}</p>
+          <h1 className="type-display-2 mt-2 text-ink">{phase === 'checking' ? 'Checking you in…' : 'Checked in.'}</h1>
+          <p className="type-body mt-2 text-ink-2">
+            {phase === 'checking'
+              ? 'Signing you in with your Google account. This takes a second.'
+              : 'One page to fill and you are through.'}
+          </p>
+        </div>
+      </main>
+      {phase === 'onboarding' ? (
+        <OnboardingModal
+          open
+          onComplete={async (data) => {
+            await completeOnboarding(data);
+            navigate(next, { replace: true });
+          }}
+        />
+      ) : null}
     </div>
   );
 }

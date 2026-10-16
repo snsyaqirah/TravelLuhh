@@ -13,6 +13,7 @@ import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
 
+/** Authentication#getName() is the user's email. Access rules live in TripAccessService. */
 @RestController
 @RequestMapping("/api/trips")
 @RequiredArgsConstructor
@@ -25,16 +26,17 @@ public class TripController {
             @Valid @RequestBody CreateTripRequest request,
             Authentication authentication
     ) {
-        String userId = authentication.getName();
-        TripResponse response = tripService.createTrip(request, userId);
+        TripResponse response = tripService.createTrip(request, authentication.getName());
         return ResponseEntity.status(HttpStatus.CREATED).body(response);
     }
 
+    /** ?archived=false (default) | true | all */
     @GetMapping
-    public ResponseEntity<List<TripResponse>> getAllTrips(Authentication authentication) {
-        String userId = authentication.getName();
-        List<TripResponse> trips = tripService.getAllTripsForUser(userId);
-        return ResponseEntity.ok(trips);
+    public ResponseEntity<List<TripResponse>> getAllTrips(
+            @RequestParam(name = "archived", defaultValue = "false") String archived,
+            Authentication authentication
+    ) {
+        return ResponseEntity.ok(tripService.getAllTripsForUser(authentication.getName(), archived));
     }
 
     @GetMapping("/{tripId}")
@@ -42,9 +44,7 @@ public class TripController {
             @PathVariable Long tripId,
             Authentication authentication
     ) {
-        String userId = authentication.getName();
-        TripResponse trip = tripService.getTripById(tripId, userId);
-        return ResponseEntity.ok(trip);
+        return ResponseEntity.ok(tripService.getTripById(tripId, authentication.getName()));
     }
 
     @PutMapping("/{tripId}")
@@ -53,9 +53,7 @@ public class TripController {
             @Valid @RequestBody UpdateTripRequest request,
             Authentication authentication
     ) {
-        String userId = authentication.getName();
-        TripResponse trip = tripService.updateTrip(tripId, request, userId);
-        return ResponseEntity.ok(trip);
+        return ResponseEntity.ok(tripService.updateTrip(tripId, request, authentication.getName()));
     }
 
     @DeleteMapping("/{tripId}")
@@ -63,8 +61,7 @@ public class TripController {
             @PathVariable Long tripId,
             Authentication authentication
     ) {
-        String userId = authentication.getName();
-        tripService.deleteTrip(tripId, userId);
+        tripService.deleteTrip(tripId, authentication.getName());
         return ResponseEntity.noContent().build();
     }
 }

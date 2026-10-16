@@ -36,6 +36,12 @@ public interface UserRepository extends JpaRepository<User, Long> {
     Optional<User> findByEmail(String email);
 
     /**
+     * Find user by email, ignoring case (member invites: people type addresses in any case).
+     * Spring generates: SELECT * FROM users WHERE UPPER(email) = UPPER(?)
+     */
+    Optional<User> findByEmailIgnoreCase(String email);
+
+    /**
      * Check if user exists by email
      * Spring generates: SELECT COUNT(*) > 0 FROM users WHERE email = ?
      */

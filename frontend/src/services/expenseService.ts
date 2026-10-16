@@ -1,44 +1,31 @@
 import { api } from '@/lib/axios';
-import { Expense } from '@/types';
+import type { CreateExpenseRequest, CreateSubItemInput, Expense } from '@/types';
+import { normalizeExpense } from './normalize';
 
-export interface CreateSubItemRequest {
-  description: string;
-  amount: number;
-  category?: string;
-}
-
-export interface CreateExpenseRequest {
-  tripId: number;
-  description: string;
-  amount: number;
-  currency: string;
-  category: string;
-  expenseDate: string;
-  notes?: string;
-  subItems?: CreateSubItemRequest[];
-}
+export type { CreateExpenseRequest } from '@/types';
+/** @deprecated Use CreateSubItemInput from '@/types'. */
+export type CreateSubItemRequest = CreateSubItemInput;
 
 export const expenseService = {
-  /**
-   * Get all expenses for a trip
-   */
-  async getExpensesByTrip(tripId: string): Promise<Expense[]> {
-    const response = await api.get<Expense[]>(`/expenses/trip/${tripId}`);
-    return response.data;
+  /** Newest date first. */
+  async getExpensesByTrip(tripId: number): Promise<Expense[]> {
+    const res = await api.get<Expense[]>(`/expenses/trip/${tripId}`);
+    return (res.data ?? []).map(normalizeExpense);
   },
 
-  /**
-   * Create a new expense
-   */
+  /** amount/currency must already be in the trip currency (see toTripCurrency in lib/money). */
   async createExpense(data: CreateExpenseRequest): Promise<Expense> {
-    const response = await api.post<Expense>('/expenses', data);
-    return response.data;
+    const res = await api.post<Expense>('/expenses', data);
+    return normalizeExpense(res.data);
   },
 
-  /**
-   * Delete an expense
-   */
-  async deleteExpense(expenseId: string): Promise<void> {
+  /** Replaces the expense, sub-items included. */
+  async updateExpense(expenseId: number, data: CreateExpenseRequest): Promise<Expense> {
+    const res = await api.put<Expense>(`/expenses/${expenseId}`, data);
+    return normalizeExpense(res.data);
+  },
+
+  async deleteExpense(expenseId: number): Promise<void> {
     await api.delete(`/expenses/${expenseId}`);
   },
 };
