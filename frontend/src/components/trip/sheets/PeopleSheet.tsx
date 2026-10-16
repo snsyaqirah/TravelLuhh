@@ -78,6 +78,8 @@ export function PeopleSheet({ trip, open, onOpenChange }: PeopleSheetProps) {
   const [confirmLeave, setConfirmLeave] = useState(false);
   const [leaveError, setLeaveError] = useState<string | null>(null);
   const [leaving, setLeaving] = useState(false);
+  // Remounts the invite form (clearing its old "is on the trip" line) once the roster changes another way.
+  const [inviteKey, setInviteKey] = useState(0);
 
   const setRowError = (id: number, msg: string | null) =>
     setRowErrors((e) => {
@@ -110,6 +112,7 @@ export function PeopleSheet({ trip, open, onOpenChange }: PeopleSheetProps) {
       await removeMember(m.id);
       setAnnounce(`${m.name} is off the trip. Anything they logged stays in the ledger.`);
       setRemoving(null);
+      setInviteKey((k) => k + 1);
     } catch (x) {
       setRemoveError(getErrorMessage(x, `${m.name} is still on the trip. Try again.`));
     } finally {
@@ -138,7 +141,7 @@ export function PeopleSheet({ trip, open, onOpenChange }: PeopleSheetProps) {
       <SheetContent
         ref={contentRef}
         side={wide ? 'right' : 'bottom'}
-        className={cn('flex flex-col gap-0 p-0', wide ? 'w-full sm:max-w-[440px]' : 'max-h-[88dvh]')}
+        className={cn('flex flex-col gap-0 overflow-hidden p-0', wide ? 'w-full sm:max-w-[440px]' : 'max-h-[88dvh]')}
         // Start on the sheet itself, not on the first role picker, so opening it can't change anyone's role.
         onOpenAutoFocus={(e) => {
           e.preventDefault();
@@ -197,7 +200,7 @@ export function PeopleSheet({ trip, open, onOpenChange }: PeopleSheetProps) {
 
           {isOwner ? (
             <div className="mt-2 border-t border-rule pt-5">
-              <InviteForm trip={trip} onInvite={addMember} />
+              <InviteForm key={inviteKey} trip={trip} onInvite={addMember} />
             </div>
           ) : (
             <div className="mt-2 border-t border-rule pt-5">
