@@ -3,15 +3,19 @@ import { cva, type VariantProps } from "class-variance-authority";
 
 import { cn } from "@/lib/utils";
 
+// A printed chip: 2px radius, Plex Mono caps. Never a pill.
 const badgeVariants = cva(
-  "inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-semibold transition-colors focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2",
+  "inline-flex h-[22px] items-center gap-1 whitespace-nowrap rounded-sm border px-1.5 font-mono text-[11px] font-medium uppercase leading-none tracking-[0.06em] [&_svg]:size-3 [&_svg]:shrink-0",
   {
     variants: {
       variant: {
-        default: "border-transparent bg-primary text-primary-foreground hover:bg-primary/80",
-        secondary: "border-transparent bg-secondary text-secondary-foreground hover:bg-secondary/80",
-        destructive: "border-transparent bg-destructive text-destructive-foreground hover:bg-destructive/80",
-        outline: "text-foreground",
+        default: "border-transparent bg-fund-tint text-fund",
+        secondary: "border-transparent bg-sunken text-ink-2",
+        destructive: "border-transparent bg-stamp-tint text-stamp",
+        // The ISO-code chip (JP, MY): ink rule, ink text.
+        outline: "border-ink bg-transparent text-ink",
+        solid: "border-transparent bg-fund text-on-fund",
+        warning: "border-transparent bg-warning text-warning-foreground",
       },
     },
     defaultVariants: {

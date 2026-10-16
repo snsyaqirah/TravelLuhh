@@ -1,7 +1,12 @@
 package com.travelluhh.entity;
 
 import jakarta.persistence.*;
-import lombok.*;
+import lombok.AllArgsConstructor;
+import lombok.Builder;
+import lombok.Getter;
+import lombok.NoArgsConstructor;
+import lombok.Setter;
+import lombok.ToString;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -9,10 +14,12 @@ import java.time.LocalTime;
 
 @Entity
 @Table(name = "itinerary_items")
-@Data
+@Getter
+@Setter
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
+@ToString
 public class ItineraryItem {
 
     @Id

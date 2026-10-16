@@ -1,11 +1,7 @@
 package com.travelluhh.exception;
 
-/**
- * Custom exception for when user email already exists
- * 
- * RuntimeException: Unchecked exception (no need for try-catch)
- */
-public class UserAlreadyExistsException extends RuntimeException {
+/** An account already uses this email. Mapped to HTTP 409. */
+public class UserAlreadyExistsException extends ConflictException {
     public UserAlreadyExistsException(String message) {
         super(message);
     }

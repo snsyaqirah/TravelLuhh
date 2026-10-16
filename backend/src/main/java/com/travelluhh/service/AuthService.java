@@ -3,230 +3,285 @@ package com.travelluhh.service;
 import com.travelluhh.dto.auth.*;
 import com.travelluhh.entity.EmailVerificationCode;
 import com.travelluhh.entity.User;
+import com.travelluhh.exception.BadRequestException;
 import com.travelluhh.exception.InvalidTokenException;
 import com.travelluhh.exception.UserAlreadyExistsException;
 import com.travelluhh.repository.EmailVerificationCodeRepository;
 import com.travelluhh.repository.UserRepository;
+import com.travelluhh.security.OtpRateLimiter;
+import com.travelluhh.security.TokenService;
 import com.travelluhh.util.JwtUtil;
-import lombok.RequiredArgsConstructor;
+import io.jsonwebtoken.Claims;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.security.authentication.BadCredentialsException;
-import org.springframework.security.core.userdetails.UsernameNotFoundException;
+import org.springframework.security.authentication.DisabledException;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.security.SecureRandom;
 import java.time.LocalDateTime;
+import java.util.Locale;
 
+/**
+ * Email sign-up (initiate → verify → complete), login, forgot/reset password, refresh and logout.
+ *
+ * Status codes the frontend relies on: wrong or expired emailed code → 400; wrong password → 401;
+ * resend too soon → 429; mail server down on sign-up → 503; bad verification or refresh token → 401.
+ */
 @Slf4j
 @Service
-@RequiredArgsConstructor
 @Transactional
 public class AuthService {
+
+    public static final String PURPOSE_SIGNUP = "signup";
+    public static final String PURPOSE_RESET = "forgot_password";
+    static final int MAX_CODE_ATTEMPTS = 5;
+    static final String FORGOT_PASSWORD_MESSAGE =
+            "If an account uses that email, we've sent a 6-digit code to it. Not there? Check spam.";
+
+    private static final SecureRandom RANDOM = new SecureRandom();
 
     private final UserRepository userRepository;
     private final EmailVerificationCodeRepository codeRepository;
     private final PasswordEncoder passwordEncoder;
     private final JwtUtil jwtUtil;
     private final EmailService emailService;
+    private final TokenService tokenService;
+    private final OtpRateLimiter otpRateLimiter;
+    private final int codeExpiryMinutes;
+    private volatile String dummyHash;
 
-    @Value("${app.email.verification-expiry-minutes}")
-    private int codeExpiryMinutes;
+    public AuthService(UserRepository userRepository,
+                       EmailVerificationCodeRepository codeRepository,
+                       PasswordEncoder passwordEncoder,
+                       JwtUtil jwtUtil,
+                       EmailService emailService,
+                       TokenService tokenService,
+                       OtpRateLimiter otpRateLimiter,
+                       @Value("${app.email.verification-expiry-minutes:10}") int codeExpiryMinutes) {
+        this.userRepository = userRepository;
+        this.codeRepository = codeRepository;
+        this.passwordEncoder = passwordEncoder;
+        this.jwtUtil = jwtUtil;
+        this.emailService = emailService;
+        this.tokenService = tokenService;
+        this.otpRateLimiter = otpRateLimiter;
+        this.codeExpiryMinutes = codeExpiryMinutes;
+    }
 
-    private static final SecureRandom RANDOM = new SecureRandom();
-
-    // ── Step 1: Initiate signup ───────────────────────────────────────────────
+    // ── Sign-up step 1: email a code ─────────────────────────────────────────
 
     public MessageResponse initiateSignup(InitiateSignupRequest request) {
-        String email = request.getEmail().toLowerCase().trim();
+        String email = normalise(request.getEmail());
 
-        // If a fully-verified account exists, reject
         userRepository.findByEmail(email).ifPresent(existing -> {
             if (Boolean.TRUE.equals(existing.getEmailVerified())) {
-                throw new UserAlreadyExistsException("An account with this email already exists.");
+                throw new UserAlreadyExistsException("An account already uses this email. Log in instead.");
             }
         });
 
-        sendOtp(email, "signup");
-        return new MessageResponse("Verification code sent to " + email);
+        otpRateLimiter.acquire(email, PURPOSE_SIGNUP);
+        String code = createCode(email, PURPOSE_SIGNUP);
+        // Synchronous: a mail failure becomes a 503 and rolls the code back, instead of a false "code sent".
+        emailService.sendVerificationCode(email, code, PURPOSE_SIGNUP);
+        return new MessageResponse("We sent a 6-digit code to " + email + ". Not there? Check spam.");
     }
 
-    // ── Step 2: Verify OTP ────────────────────────────────────────────────────
+    // ── Sign-up step 2 / reset step 2: check the code ────────────────────────
 
+    /** Wrong guesses must be saved even though the request fails, hence noRollbackFor. */
+    @Transactional(noRollbackFor = BadRequestException.class)
     public VerifyEmailResponse verifyEmail(VerifyEmailRequest request) {
-        String email = request.getEmail().toLowerCase().trim();
-        validateOtp(email, request.getCode(), request.getPurpose());
+        String email = normalise(request.getEmail());
+        String purpose = request.getPurpose();
+        checkCode(email, request.getCode().trim(), purpose);
 
-        // Mark all previous codes as used
-        codeRepository.markAllUsedByEmailAndPurpose(email, request.getPurpose());
-
-        // Issue a short-lived verification token
-        String verificationToken = jwtUtil.generateVerificationToken(email, request.getPurpose());
-        return new VerifyEmailResponse(verificationToken, "Email verified successfully.");
+        codeRepository.markAllUsedByEmailAndPurpose(email, purpose);
+        String verificationToken = jwtUtil.generateVerificationToken(email, purpose);
+        return new VerifyEmailResponse(verificationToken, "Email verified.");
     }
 
-    // ── Step 3: Complete signup ───────────────────────────────────────────────
+    // ── Sign-up step 3: create the account ───────────────────────────────────
 
     public LoginResponse completeSignup(CompleteSignupRequest request) {
-        String token = request.getVerificationToken();
+        String email = verifiedEmail(request.getVerificationToken(), PURPOSE_SIGNUP,
+                "This sign-up step has expired. Start again to get a new code.");
 
-        if (!jwtUtil.isVerificationToken(token)) {
-            throw new InvalidTokenException("Invalid or expired verification token.");
-        }
-
-        String purpose = jwtUtil.extractCustomClaim(token, "purpose");
-        if (!"signup".equals(purpose)) {
-            throw new InvalidTokenException("Token is not valid for signup.");
-        }
-
-        String email = jwtUtil.extractUsername(token);
-
-        // Create or update stub account
         User user = userRepository.findByEmail(email)
-                .orElse(User.builder()
-                        .email(email)
-                        .authProvider(User.AuthProvider.local)
-                        .build());
+                .orElseGet(() -> User.builder().email(email).authProvider(User.AuthProvider.local).build());
 
         if (Boolean.TRUE.equals(user.getEmailVerified())) {
-            throw new UserAlreadyExistsException("Account already exists. Please log in.");
+            throw new UserAlreadyExistsException("An account already uses this email. Log in instead.");
         }
 
-        user.setName(request.getName());
+        user.setName(request.getName().trim());
         user.setPasswordHash(passwordEncoder.encode(request.getPassword()));
         user.setEmailVerified(true);
-        user.setOnboardingCompleted(false);
+
+        // The Register profile step collects home country and currency; with both, onboarding is done.
+        boolean hasHome = notBlank(request.getCountry()) && notBlank(request.getCurrency());
+        if (hasHome) {
+            user.setCountry(request.getCountry().toUpperCase(Locale.ROOT));
+            user.setCurrency(request.getCurrency().toUpperCase(Locale.ROOT));
+        }
+        user.setOnboardingCompleted(hasHome);
 
         user = userRepository.save(user);
-
-        return buildLoginResponse(user);
+        return tokenService.issueSession(user);
     }
 
-    // ── Login ─────────────────────────────────────────────────────────────────
+    // ── Login ────────────────────────────────────────────────────────────────
 
     public LoginResponse login(LoginRequest request) {
-        String email = request.getEmail().toLowerCase().trim();
+        String email = normalise(request.getEmail());
+        User user = userRepository.findByEmail(email).orElse(null);
+        if (user == null) {
+            // Spend the same bcrypt time as a real check so response timing doesn't reveal unknown emails.
+            passwordEncoder.matches(request.getPassword(), timingDummyHash());
+            throw new BadCredentialsException("unknown email");
+        }
 
-        User user = userRepository.findByEmail(email)
-                .orElseThrow(() -> new BadCredentialsException("Invalid email or password."));
-
+        if (!user.hasPassword()) {
+            // Reveals only that the address uses Google sign-in, which /initiate-signup's 409 reveals anyway.
+            throw new DisabledException(
+                    "This account signs in with Google. Use Continue with Google, or reset your password to add one.");
+        }
+        if (!passwordEncoder.matches(request.getPassword(), user.getPasswordHash())) {
+            throw new BadCredentialsException("wrong password");
+        }
         if (!Boolean.TRUE.equals(user.getEmailVerified())) {
-            throw new BadCredentialsException("Email not verified. Please complete signup first.");
+            throw new DisabledException("This email isn't verified yet. Finish signing up first.");
         }
-
-        if (user.getPasswordHash() == null ||
-                !passwordEncoder.matches(request.getPassword(), user.getPasswordHash())) {
-            throw new BadCredentialsException("Invalid email or password.");
-        }
-
-        return buildLoginResponse(user);
+        return tokenService.issueSession(user);
     }
 
-    // ── Forgot password ───────────────────────────────────────────────────────
+    // ── Forgot password ──────────────────────────────────────────────────────
 
+    /**
+     * Same 200 and message whether or not the email has an account. The throttle runs before the lookup,
+     * so a 429 doesn't give it away either.
+     */
     public MessageResponse forgotPassword(ForgotPasswordRequest request) {
-        String email = request.getEmail().toLowerCase().trim();
+        String email = normalise(request.getEmail());
+        otpRateLimiter.acquire(email, PURPOSE_RESET);
 
         userRepository.findByEmail(email)
                 .filter(u -> Boolean.TRUE.equals(u.getEmailVerified()))
-                .orElseThrow(() -> new UsernameNotFoundException("No verified account found for this email."));
-
-        sendOtp(email, "forgot_password");
-        return new MessageResponse("Password reset code sent to " + email);
+                .ifPresent(u -> {
+                    String code = createCode(email, PURPOSE_RESET);
+                    emailService.sendVerificationCodeAsync(email, code, PURPOSE_RESET);
+                });
+        return new MessageResponse(FORGOT_PASSWORD_MESSAGE);
     }
 
-    // ── Reset password ────────────────────────────────────────────────────────
+    // ── Reset password ───────────────────────────────────────────────────────
 
     public MessageResponse resetPassword(ResetPasswordRequest request) {
-        String token = request.getVerificationToken();
-
-        if (!jwtUtil.isVerificationToken(token)) {
-            throw new InvalidTokenException("Invalid or expired verification token.");
+        String email = verifiedEmail(request.getVerificationToken(), PURPOSE_RESET,
+                "This reset step has expired. Ask for a new code.");
+        if (request.getEmail() == null || !email.equals(normalise(request.getEmail()))) {
+            throw new BadRequestException("This code was sent to a different email address.");
         }
-
-        String purpose = jwtUtil.extractCustomClaim(token, "purpose");
-        if (!"forgot_password".equals(purpose)) {
-            throw new InvalidTokenException("Token is not valid for password reset.");
-        }
-
-        String email = jwtUtil.extractUsername(token);
 
         User user = userRepository.findByEmail(email)
-                .orElseThrow(() -> new UsernameNotFoundException("User not found."));
+                .orElseThrow(() -> new InvalidTokenException("This reset step has expired. Ask for a new code."));
 
         user.setPasswordHash(passwordEncoder.encode(request.getNewPassword()));
         userRepository.save(user);
+        tokenService.revokeAllForUser(user.getId());
 
-        return new MessageResponse("Password reset successfully. You can now log in.");
+        return new MessageResponse("Password updated. Log in with your new password.");
     }
 
-    // ── Refresh token ─────────────────────────────────────────────────────────
+    // ── Sessions ─────────────────────────────────────────────────────────────
 
     public LoginResponse refreshToken(String refreshToken) {
-        String email = jwtUtil.extractUsername(refreshToken);
-
-        User user = userRepository.findByEmail(email)
-                .orElseThrow(() -> new UsernameNotFoundException("User not found."));
-
-        if (!jwtUtil.validateToken(refreshToken, user)) {
-            throw new InvalidTokenException("Invalid or expired refresh token.");
-        }
-
-        return buildLoginResponse(user);
+        return tokenService.rotate(refreshToken);
     }
 
-    // ── Helpers ───────────────────────────────────────────────────────────────
+    public void logout(String refreshToken) {
+        tokenService.revoke(refreshToken);
+    }
 
-    private void sendOtp(String email, String purpose) {
+    // ── Helpers ──────────────────────────────────────────────────────────────
+
+    private String timingDummyHash() {
+        String hash = dummyHash;
+        if (hash == null) {
+            hash = passwordEncoder.encode("timing-equaliser-" + RANDOM.nextLong());
+            dummyHash = hash;
+        }
+        return hash;
+    }
+
+    /** Burns any earlier unused codes for this email + purpose, then stores and returns a fresh one. */
+    private String createCode(String email, String purpose) {
+        codeRepository.markAllUsedByEmailAndPurpose(email, purpose);
         String code = String.format("%06d", RANDOM.nextInt(1_000_000));
-
-        EmailVerificationCode record = EmailVerificationCode.builder()
+        codeRepository.save(EmailVerificationCode.builder()
                 .email(email)
                 .code(code)
                 .purpose(purpose)
+                .attempts(0)
+                .used(false)
                 .expiresAt(LocalDateTime.now().plusMinutes(codeExpiryMinutes))
-                .build();
-
-        codeRepository.save(record);
-        emailService.sendVerificationCode(email, code, purpose);
+                .build());
+        return code;
     }
 
-    private void validateOtp(String email, String code, String purpose) {
+    private void checkCode(String email, String code, String purpose) {
         EmailVerificationCode record = codeRepository
                 .findTopByEmailAndPurposeAndUsedFalseOrderByCreatedAtDesc(email, purpose)
-                .orElseThrow(() -> new InvalidTokenException("No active code found. Please request a new one."));
+                .orElseThrow(() -> new BadRequestException("There's no active code for this email. Ask for a new one."));
 
         if (record.isExpired()) {
-            throw new InvalidTokenException("Code has expired. Please request a new one.");
+            record.setUsed(true);
+            codeRepository.save(record);
+            throw new BadRequestException("That code has expired. Ask for a new one.");
         }
-
-        if (!record.getCode().equals(code)) {
-            throw new InvalidTokenException("Incorrect code. Please try again.");
+        if (record.attemptsSoFar() >= MAX_CODE_ATTEMPTS) {
+            record.setUsed(true);
+            codeRepository.save(record);
+            throw new BadRequestException("Too many wrong tries. Ask for a new code.");
+        }
+        if (!constantTimeEquals(record.getCode(), code)) {
+            int attempts = record.attemptsSoFar() + 1;
+            record.setAttempts(attempts);
+            int left = MAX_CODE_ATTEMPTS - attempts;
+            if (left <= 0) {
+                record.setUsed(true);
+            }
+            codeRepository.save(record);
+            throw new BadRequestException(left <= 0
+                    ? "That code doesn't match, and that was the last try. Ask for a new code."
+                    : "That code doesn't match. " + left + (left == 1 ? " try" : " tries") + " left.");
         }
     }
 
-    LoginResponse buildLoginResponse(User user) {
-        String accessToken  = jwtUtil.generateToken(user);
-        String refreshToken = jwtUtil.generateRefreshToken(user);
+    /** Email from a typ=verify token issued for {@code purpose}; anything else is a 401. */
+    private String verifiedEmail(String token, String purpose, String expiredMessage) {
+        Claims claims = jwtUtil.parse(token, JwtUtil.TokenType.VERIFY)
+                .orElseThrow(() -> new InvalidTokenException(expiredMessage));
+        if (!purpose.equals(claims.get(JwtUtil.CLAIM_PURPOSE, String.class))) {
+            throw new InvalidTokenException(expiredMessage);
+        }
+        return normalise(claims.getSubject());
+    }
 
-        LoginResponse.UserDto userDto = LoginResponse.UserDto.builder()
-                .id(user.getId())
-                .name(user.getName())
-                .email(user.getEmail())
-                .avatar(user.getAvatar())
-                .authProvider(user.getAuthProvider().name())
-                .country(user.getCountry())
-                .currency(user.getCurrency())
-                .onboardingCompleted(user.getOnboardingCompleted())
-                .build();
+    private static boolean constantTimeEquals(String expected, String actual) {
+        if (expected == null || actual == null) return false;
+        return MessageDigest.isEqual(expected.getBytes(StandardCharsets.UTF_8), actual.getBytes(StandardCharsets.UTF_8));
+    }
 
-        return LoginResponse.builder()
-                .accessToken(accessToken)
-                .refreshToken(refreshToken)
-                .expiresIn(jwtUtil.getExpirationTime())
-                .user(userDto)
-                .build();
+    private static String normalise(String email) {
+        return email == null ? "" : email.trim().toLowerCase(Locale.ROOT);
+    }
+
+    private static boolean notBlank(String s) {
+        return s != null && !s.isBlank();
     }
 }

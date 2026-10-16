@@ -1,352 +1,353 @@
-import { useState, useEffect, useRef } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+// Register (§9.2): EMAIL ── VERIFY ── PROFILE. The code step uses the split-flap cells and honours the server's
+// resend throttle (429 Retry-After); the profile step sends home country + currency with complete-signup, so
+// the new account skips onboarding and lands on /home.
+import { useRef, useState, type FormEvent, type ReactNode } from 'react';
+import { Link, Navigate, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/context/AuthContext';
 import { authService } from '@/services/authService';
+import { getErrorMessage, getErrorStatus } from '@/lib/axios';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
-import { useToast } from '@/hooks/use-toast';
-import { Compass, Loader2, Mail, Lock, User, Eye, EyeOff, ArrowLeft, CheckCircle } from 'lucide-react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { GoogleLoginButton } from '@/components/auth/GoogleLoginButton';
+import { AuthShell } from '@/components/frontdoor/AuthShell';
+import { Field, FormAlert } from '@/components/frontdoor/fields';
+import { describedBy } from '@/components/frontdoor/fieldIds';
+import { CountryPicker, CurrencySelect } from '@/components/frontdoor/HomeFields';
+import { OrDivider } from '@/components/frontdoor/OrDivider';
+import { ProgressStrip } from '@/components/frontdoor/ProgressStrip';
+import { CodeStep, NewPasswordFields, StepHeading } from '@/components/frontdoor/steps';
+import { checkNewPassword, useStepFocus } from '@/components/frontdoor/stepHelpers';
+import { currencyForCountry, isEmail, maskEmail, retryAfterSeconds } from '@/components/frontdoor/authHelpers';
+import { useCountdown } from '@/components/frontdoor/useCountdown';
 
 type Step = 'email' | 'otp' | 'profile';
+const STEPS = ['Email', 'Verify', 'Profile'] as const;
+const STEP_INDEX: Record<Step, number> = { email: 0, otp: 1, profile: 2 };
+const RESEND_SECONDS = 60;
+
+interface Problem {
+  text: string;
+  action?: ReactNode;
+}
+
+const linkClass = 'text-ink underline decoration-rule-strong underline-offset-[3px] hover:decoration-ink';
 
 export default function Register() {
+  const { signInWithTokens, isAuthenticated } = useAuth();
+  const navigate = useNavigate();
+
   const [step, setStep] = useState<Step>('email');
   const [email, setEmail] = useState('');
-  const [otp, setOtp] = useState(['', '', '', '', '', '']);
+  const [code, setCode] = useState('');
   const [verificationToken, setVerificationToken] = useState('');
   const [name, setName] = useState('');
+  const [country, setCountry] = useState('MY');
+  const [currency, setCurrency] = useState('MYR');
   const [password, setPassword] = useState('');
-  const [confirmPassword, setConfirmPassword] = useState('');
-  const [showPassword, setShowPassword] = useState(false);
-  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const [error, setError] = useState('');
-  const [resendCooldown, setResendCooldown] = useState(0);
+  const [confirm, setConfirm] = useState('');
 
-  const otpRefs = useRef<(HTMLInputElement | null)[]>([]);
-  const { setUserFromSession, isAuthenticated } = useAuth();
-  const navigate = useNavigate();
-  const { toast } = useToast();
+  const [errors, setErrors] = useState<Record<string, string | undefined>>({});
+  const [problem, setProblem] = useState<Problem | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [resending, setResending] = useState(false);
+  const busyRef = useRef(false);
+  const resend = useCountdown();
+  const stepRef = useStepFocus(step);
 
-  useEffect(() => {
-    if (isAuthenticated) navigate('/dashboard', { replace: true });
-  }, [isAuthenticated, navigate]);
+  const emailRef = useRef<HTMLInputElement>(null);
+  const nameRef = useRef<HTMLInputElement>(null);
+  const passwordRef = useRef<HTMLInputElement>(null);
+  const confirmRef = useRef<HTMLInputElement>(null);
 
-  useEffect(() => {
-    if (resendCooldown > 0) {
-      const t = setTimeout(() => setResendCooldown((c) => c - 1), 1000);
-      return () => clearTimeout(t);
+  if (isAuthenticated) return <Navigate to="/home" replace />;
+
+  const go = (next: Step) => {
+    setErrors({});
+    setProblem(null);
+    setStep(next);
+  };
+
+  const run = async (fn: () => Promise<void>) => {
+    if (busyRef.current) return;
+    busyRef.current = true;
+    setBusy(true);
+    try {
+      await fn();
+    } finally {
+      busyRef.current = false;
+      setBusy(false);
     }
-  }, [resendCooldown]);
+  };
 
-  // ── Step 1: send OTP ──────────────────────────────────────────────────────
-
-  const handleEmailSubmit = async (e: React.FormEvent) => {
+  // ── 1. Email → a code ────────────────────────────────────────────────────────────────────────────────
+  const onEmailSubmit = (e: FormEvent) => {
     e.preventDefault();
-    setError('');
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-      setError('Please enter a valid email');
+    setProblem(null);
+    const trimmed = email.trim();
+    const err = !trimmed ? 'Enter your email.' : !isEmail(trimmed) ? "That doesn't look like an email address." : undefined;
+    setErrors({ email: err });
+    if (err) return emailRef.current?.focus();
+
+    void run(async () => {
+      try {
+        await authService.initiateSignup(trimmed);
+        setNotice(null);
+        setCode('');
+        resend.start(RESEND_SECONDS);
+        go('otp');
+      } catch (error) {
+        const status = getErrorStatus(error);
+        if (status === 429) {
+          // A code went out moments ago: it's probably already in the inbox.
+          setCode('');
+          resend.start(retryAfterSeconds(error));
+          go('otp');
+          setNotice(getErrorMessage(error));
+        } else if (status === 409) {
+          setProblem({
+            text: getErrorMessage(error),
+            action: (
+              <Link to="/login" state={{ email: trimmed }} className={linkClass}>
+                Go to log in
+              </Link>
+            ),
+          });
+        } else {
+          setProblem({ text: getErrorMessage(error, "We couldn't send the code. Try again in a minute.") });
+        }
+      }
+    });
+  };
+
+  // ── 2. The code ──────────────────────────────────────────────────────────────────────────────────────
+  const verify = (value: string) => {
+    if (value.length !== 6) {
+      setErrors({ code: 'Enter all 6 digits.' });
       return;
     }
-    setIsSubmitting(true);
+    void run(async () => {
+      try {
+        const res = await authService.verifyEmail(email.trim(), value, 'signup');
+        setVerificationToken(res.verificationToken);
+        setNotice(null);
+        go('profile');
+      } catch (error) {
+        setErrors({ code: getErrorMessage(error, "That code didn't work. Check the email and try again.") });
+        setCode('');
+      }
+    });
+  };
+
+  const onResend = async () => {
+    if (resend.seconds > 0 || resending) return;
+    setResending(true);
+    setErrors({});
     try {
-      await authService.initiateSignup(email);
-      setStep('otp');
-      setResendCooldown(60);
-      toast({ title: 'Code sent!', description: `Check ${email} for your 6-digit code.` });
-    } catch (err: any) {
-      setError(err.response?.data?.message || 'Failed to send code. Please try again.');
+      await authService.initiateSignup(email.trim());
+      setCode('');
+      resend.start(RESEND_SECONDS);
+      setNotice(`New code sent to ${maskEmail(email)}. The old one no longer works.`);
+    } catch (error) {
+      if (getErrorStatus(error) === 429) resend.start(retryAfterSeconds(error));
+      setNotice(getErrorMessage(error, "We couldn't send a new code. Try again in a minute."));
     } finally {
-      setIsSubmitting(false);
+      setResending(false);
     }
   };
 
-  // ── Step 2: verify OTP ────────────────────────────────────────────────────
-
-  const handleOtpChange = (index: number, value: string) => {
-    if (!/^\d*$/.test(value)) return;
-    const next = [...otp];
-    next[index] = value.slice(-1);
-    setOtp(next);
-    if (value && index < 5) otpRefs.current[index + 1]?.focus();
+  // ── 3. Profile → account ─────────────────────────────────────────────────────────────────────────────
+  const restart = () => {
+    setCode('');
+    setVerificationToken('');
+    setNotice(null);
+    go('email');
   };
 
-  const handleOtpKeyDown = (index: number, e: React.KeyboardEvent) => {
-    if (e.key === 'Backspace' && !otp[index] && index > 0) {
-      otpRefs.current[index - 1]?.focus();
-    }
+  const onCountry = (code: string) => {
+    setCountry(code);
+    const implied = currencyForCountry(code);
+    if (implied) setCurrency(implied);
   };
 
-  const handleOtpPaste = (e: React.ClipboardEvent) => {
-    const pasted = e.clipboardData.getData('text').replace(/\D/g, '').slice(0, 6);
-    if (pasted.length === 6) {
-      setOtp(pasted.split(''));
-      otpRefs.current[5]?.focus();
-    }
-  };
-
-  const handleOtpSubmit = async (e: React.FormEvent) => {
+  const onProfileSubmit = (e: FormEvent) => {
     e.preventDefault();
-    setError('');
-    const code = otp.join('');
-    if (code.length !== 6) { setError('Enter the 6-digit code'); return; }
-    setIsSubmitting(true);
-    try {
-      const res = await authService.verifyEmail(email, code, 'signup');
-      setVerificationToken(res.verificationToken);
-      setStep('profile');
-    } catch (err: any) {
-      setError(err.response?.data?.message || 'Incorrect or expired code. Try again.');
-    } finally {
-      setIsSubmitting(false);
-    }
+    setProblem(null);
+    const found: Record<string, string | undefined> = {};
+    const n = name.trim();
+    if (n.length < 2) found.name = 'Enter your name (at least 2 letters).';
+    else if (n.length > 100) found.name = 'Keep your name under 100 characters.';
+    if (!country) found.country = 'Pick your home country.';
+    if (!currency) found.currency = 'Pick your home currency.';
+    Object.assign(found, checkNewPassword(password, confirm));
+    setErrors(found);
+    if (found.name) return nameRef.current?.focus();
+    if (found.password) return passwordRef.current?.focus();
+    if (found.confirm) return confirmRef.current?.focus();
+    if (found.country || found.currency) return;
+
+    void run(async () => {
+      let res;
+      try {
+        res = await authService.completeSignup(verificationToken, n, password, { country, currency });
+      } catch (error) {
+        if (getErrorStatus(error) === 401) {
+          setProblem({
+            text: 'That email check has expired. Start again with your email; it takes a minute.',
+            action: (
+              <button type="button" onClick={restart} className={linkClass}>
+                Start again
+              </button>
+            ),
+          });
+        } else {
+          setProblem({ text: getErrorMessage(error, "Your account wasn't created. Try again in a moment.") });
+        }
+        return;
+      }
+      try {
+        await signInWithTokens(res.accessToken, res.refreshToken);
+        navigate('/home', { replace: true });
+      } catch {
+        navigate('/login', {
+          replace: true,
+          state: { email: email.trim(), notice: 'Your account is ready. Log in with your new password.' },
+        });
+      }
+    });
   };
-
-  const handleResend = async () => {
-    if (resendCooldown > 0) return;
-    try {
-      await authService.initiateSignup(email);
-      setOtp(['', '', '', '', '', '']);
-      setResendCooldown(60);
-      toast({ title: 'Code resent!', description: `New code sent to ${email}.` });
-    } catch {
-      toast({ variant: 'destructive', title: 'Failed to resend', description: 'Please try again.' });
-    }
-  };
-
-  // ── Step 3: complete signup ───────────────────────────────────────────────
-
-  const handleProfileSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setError('');
-    if (!name.trim() || name.trim().length < 2) { setError('Name must be at least 2 characters'); return; }
-    if (password.length < 8) { setError('Password must be at least 8 characters'); return; }
-    if (password !== confirmPassword) { setError('Passwords do not match'); return; }
-
-    setIsSubmitting(true);
-    try {
-      const res = await authService.completeSignup(verificationToken, name.trim(), password);
-      authService.saveSession(res);
-      setUserFromSession(res.user, res.accessToken, res.refreshToken);
-      toast({ title: 'Welcome to TravelLuhh!', description: 'Your account is ready.' });
-      navigate('/dashboard');
-    } catch (err: any) {
-      setError(err.response?.data?.message || 'Failed to create account. Please try again.');
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
-
-  const stepLabels = ['Email', 'Verify', 'Profile'];
-  const stepIndex = step === 'email' ? 0 : step === 'otp' ? 1 : 2;
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-background px-4 py-12">
-      <motion.div
-        initial={{ opacity: 0, y: 20 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.4 }}
-        className="w-full max-w-md"
-      >
-        {/* Logo */}
-        <div className="mb-8 text-center">
-          <Link to="/" className="inline-flex items-center gap-2">
-            <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-primary text-primary-foreground">
-              <Compass className="h-7 w-7" />
-            </div>
-            <span className="font-display text-2xl font-bold text-foreground">TravelLuhh</span>
-          </Link>
-        </div>
-
-        {/* Step indicators */}
-        <div className="mb-6 flex items-center justify-center gap-2">
-          {stepLabels.map((label, i) => (
-            <div key={label} className="flex items-center gap-2">
-              <div className="flex flex-col items-center gap-1">
-                <div
-                  className={`flex h-7 w-7 items-center justify-center rounded-full text-xs font-semibold transition-colors ${
-                    i < stepIndex
-                      ? 'bg-primary text-primary-foreground'
-                      : i === stepIndex
-                      ? 'bg-primary text-primary-foreground'
-                      : 'bg-muted text-muted-foreground'
-                  }`}
-                >
-                  {i < stepIndex ? <CheckCircle className="h-4 w-4" /> : i + 1}
-                </div>
-                <span className={`text-[10px] ${i === stepIndex ? 'text-foreground font-medium' : 'text-muted-foreground'}`}>
-                  {label}
-                </span>
-              </div>
-              {i < stepLabels.length - 1 && (
-                <div className={`mb-4 h-px w-8 transition-colors ${i < stepIndex ? 'bg-primary' : 'bg-border'}`} />
-              )}
-            </div>
-          ))}
-        </div>
-
-        <Card className="border-border shadow-travelluhh">
-          <AnimatePresence mode="wait">
-            {/* ── Step 1: Email ── */}
-            {step === 'email' && (
-              <motion.div key="email" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }}>
-                <CardHeader className="space-y-1 text-center">
-                  <CardTitle className="font-display text-2xl">Create an account</CardTitle>
-                  <CardDescription>Enter your email to get started</CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <form onSubmit={handleEmailSubmit} className="space-y-4">
-                    <div className="space-y-2">
-                      <Label htmlFor="email">Email</Label>
-                      <div className="relative">
-                        <Mail className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                        <Input
-                          id="email"
-                          type="email"
-                          placeholder="you@example.com"
-                          value={email}
-                          onChange={(e) => setEmail(e.target.value)}
-                          className={`pl-10 ${error ? 'border-destructive' : ''}`}
-                          autoFocus
-                        />
-                      </div>
-                      {error && <p className="text-sm text-destructive">{error}</p>}
-                    </div>
-                    <Button type="submit" className="w-full" disabled={isSubmitting}>
-                      {isSubmitting ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Sending code...</> : 'Continue'}
-                    </Button>
-                  </form>
-
-                  <div className="relative my-6">
-                    <div className="absolute inset-0 flex items-center"><div className="w-full border-t border-border" /></div>
-                    <div className="relative flex justify-center text-xs uppercase">
-                      <span className="bg-card px-2 text-muted-foreground">Or</span>
-                    </div>
-                  </div>
-
-                  <Button type="button" variant="outline" className="w-full" onClick={() => { window.location.href = 'http://localhost:8080/oauth2/authorization/google'; }}>
-                    <svg className="mr-2 h-4 w-4" viewBox="0 0 24 24">
-                      <path fill="currentColor" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" />
-                      <path fill="currentColor" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" />
-                      <path fill="currentColor" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" />
-                      <path fill="currentColor" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" />
-                    </svg>
-                    Continue with Google
-                  </Button>
-                </CardContent>
-              </motion.div>
-            )}
-
-            {/* ── Step 2: OTP ── */}
-            {step === 'otp' && (
-              <motion.div key="otp" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }}>
-                <CardHeader className="space-y-1 text-center">
-                  <CardTitle className="font-display text-2xl">Check your email</CardTitle>
-                  <CardDescription>
-                    We sent a 6-digit code to <span className="font-medium text-foreground">{email}</span>
-                  </CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <form onSubmit={handleOtpSubmit} className="space-y-6">
-                    <div className="flex justify-center gap-2" onPaste={handleOtpPaste}>
-                      {otp.map((digit, i) => (
-                        <Input
-                          key={i}
-                          ref={(el) => { otpRefs.current[i] = el; }}
-                          type="text"
-                          inputMode="numeric"
-                          maxLength={1}
-                          value={digit}
-                          onChange={(e) => handleOtpChange(i, e.target.value)}
-                          onKeyDown={(e) => handleOtpKeyDown(i, e)}
-                          className="h-12 w-12 text-center text-lg font-semibold"
-                        />
-                      ))}
-                    </div>
-                    {error && <p className="text-center text-sm text-destructive">{error}</p>}
-                    <Button type="submit" className="w-full" disabled={isSubmitting}>
-                      {isSubmitting ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Verifying...</> : 'Verify Code'}
-                    </Button>
-                  </form>
-                  <p className="mt-4 text-center text-sm text-muted-foreground">
-                    Didn't receive it?{' '}
-                    <button
-                      type="button"
-                      onClick={handleResend}
-                      disabled={resendCooldown > 0}
-                      className="text-primary hover:underline disabled:text-muted-foreground disabled:no-underline"
-                    >
-                      {resendCooldown > 0 ? `Resend in ${resendCooldown}s` : 'Resend code'}
-                    </button>
-                  </p>
-                </CardContent>
-                <CardFooter className="flex justify-center">
-                  <button type="button" onClick={() => setStep('email')} className="inline-flex items-center text-sm text-muted-foreground hover:text-foreground">
-                    <ArrowLeft className="mr-1 h-4 w-4" /> Change email
-                  </button>
-                </CardFooter>
-              </motion.div>
-            )}
-
-            {/* ── Step 3: Profile ── */}
-            {step === 'profile' && (
-              <motion.div key="profile" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }}>
-                <CardHeader className="space-y-1 text-center">
-                  <CardTitle className="font-display text-2xl">Almost there!</CardTitle>
-                  <CardDescription>Set your name and password</CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <form onSubmit={handleProfileSubmit} className="space-y-4">
-                    <div className="space-y-2">
-                      <Label htmlFor="name">Full Name</Label>
-                      <div className="relative">
-                        <User className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                        <Input id="name" type="text" placeholder="Your name" value={name} onChange={(e) => setName(e.target.value)} className="pl-10" autoFocus />
-                      </div>
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="password">Password</Label>
-                      <div className="relative">
-                        <Lock className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                        <Input id="password" type={showPassword ? 'text' : 'password'} placeholder="Min 8 characters" value={password} onChange={(e) => setPassword(e.target.value)} className="pl-10 pr-10" />
-                        <button type="button" onClick={() => setShowPassword(!showPassword)} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground">
-                          {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                        </button>
-                      </div>
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="confirmPassword">Confirm Password</Label>
-                      <div className="relative">
-                        <Lock className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                        <Input id="confirmPassword" type={showConfirmPassword ? 'text' : 'password'} placeholder="••••••••" value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} className="pl-10 pr-10" />
-                        <button type="button" onClick={() => setShowConfirmPassword(!showConfirmPassword)} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground">
-                          {showConfirmPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                        </button>
-                      </div>
-                    </div>
-                    {error && <p className="text-sm text-destructive">{error}</p>}
-                    <Button type="submit" className="w-full" disabled={isSubmitting}>
-                      {isSubmitting ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Creating account...</> : 'Create Account'}
-                    </Button>
-                  </form>
-                </CardContent>
-              </motion.div>
-            )}
-          </AnimatePresence>
-
-          {step === 'email' && (
-            <CardFooter className="flex justify-center">
-              <p className="text-sm text-muted-foreground">
-                Already have an account?{' '}
-                <Link to="/login" className="text-primary font-medium hover:underline">Sign in</Link>
+    <AuthShell
+      line="Let's open your first tabung."
+      caseTag={step === 'profile' ? country : undefined}
+      luggage={step === 'profile' ? { name, country, currency } : null}
+    >
+      <ProgressStrip steps={STEPS} current={STEP_INDEX[step]} className="mb-8" />
+      <div ref={stepRef}>
+        {step === 'email' ? (
+          <>
+            <StepHeading lead="First, your email. We'll send a 6-digit code to check it's you.">Start a tabung</StepHeading>
+            <form noValidate onSubmit={onEmailSubmit} className="mt-8 flex flex-col gap-5">
+              <Field id="register-email" label="Email" error={errors.email}>
+                <Input
+                  ref={emailRef}
+                  data-step-focus
+                  id="register-email"
+                  type="email"
+                  inputMode="email"
+                  autoComplete="email"
+                  autoCapitalize="none"
+                  spellCheck={false}
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  aria-invalid={errors.email ? true : undefined}
+                  aria-describedby={describedBy('register-email', errors.email)}
+                />
+              </Field>
+              {problem ? <FormAlert action={problem.action}>{problem.text}</FormAlert> : null}
+              <Button type="submit" size="lg" className="w-full" disabled={busy}>
+                {busy ? 'Sending code…' : 'Send code'}
+              </Button>
+            </form>
+            <div className="mt-6 flex flex-col gap-6">
+              <OrDivider />
+              <GoogleLoginButton label="Sign up with Google" disabled={busy} />
+              <p className="type-body-s text-ink-2">
+                Already have a tabung?{' '}
+                <Link to="/login" className={linkClass}>
+                  Log in
+                </Link>
               </p>
-            </CardFooter>
-          )}
-        </Card>
-      </motion.div>
-    </div>
+            </div>
+          </>
+        ) : null}
+
+        {step === 'otp' ? (
+          <>
+            <StepHeading
+              leadId="otp-lead"
+              lead={
+                <>
+                  We sent a 6-digit code to <span className="font-mono text-[15px] text-ink">{maskEmail(email)}</span>. Not there? Check
+                  spam.
+                </>
+              }
+            >
+              Check your email
+            </StepHeading>
+            <CodeStep
+              code={code}
+              onCodeChange={(v) => {
+                setCode(v);
+                if (errors.code) setErrors({});
+              }}
+              onVerify={verify}
+              verifying={busy}
+              error={errors.code}
+              resendIn={resend.seconds}
+              resending={resending}
+              onResend={onResend}
+              onChangeEmail={restart}
+              notice={notice}
+              leadId="otp-lead"
+            />
+          </>
+        ) : null}
+
+        {step === 'profile' ? (
+          <>
+            <StepHeading lead="Every trip adds up in your home currency. You can change it later in Me.">About you</StepHeading>
+            <form noValidate onSubmit={onProfileSubmit} className="mt-8 flex flex-col gap-5">
+              <Field id="register-name" label="Your name" error={errors.name}>
+                <Input
+                  ref={nameRef}
+                  data-step-focus
+                  id="register-name"
+                  autoComplete="name"
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  aria-invalid={errors.name ? true : undefined}
+                  aria-describedby={describedBy('register-name', errors.name)}
+                />
+              </Field>
+              <div className="grid grid-cols-1 gap-5 sm:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
+                <Field id="register-country" label="Home country" error={errors.country}>
+                  <CountryPicker
+                    id="register-country"
+                    value={country}
+                    onChange={onCountry}
+                    invalid={Boolean(errors.country)}
+                    describedBy={describedBy('register-country', errors.country)}
+                  />
+                </Field>
+                <Field id="register-currency" label="Home currency" error={errors.currency}>
+                  <CurrencySelect
+                    id="register-currency"
+                    value={currency}
+                    onChange={setCurrency}
+                    invalid={Boolean(errors.currency)}
+                    describedBy={describedBy('register-currency', errors.currency)}
+                  />
+                </Field>
+              </div>
+              <NewPasswordFields
+                password={password}
+                confirm={confirm}
+                onPassword={setPassword}
+                onConfirm={setConfirm}
+                errors={{ password: errors.password, confirm: errors.confirm }}
+                passwordRef={passwordRef}
+                confirmRef={confirmRef}
+              />
+              {problem ? <FormAlert action={problem.action}>{problem.text}</FormAlert> : null}
+              <Button type="submit" size="lg" className="w-full" disabled={busy}>
+                {busy ? 'Opening your account…' : 'Open my account'}
+              </Button>
+            </form>
+          </>
+        ) : null}
+      </div>
+    </AuthShell>
   );
 }

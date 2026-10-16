@@ -2,7 +2,7 @@ package com.travelluhh.dto.auth;
 
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
-import jakarta.validation.constraints.Size;
+import jakarta.validation.constraints.Pattern;
 import lombok.Data;
 
 @Data
@@ -13,10 +13,10 @@ public class VerifyEmailRequest {
     private String email;
 
     @NotBlank(message = "Code is required")
-    @Size(min = 6, max = 6, message = "Code must be 6 digits")
+    @Pattern(regexp = "^\\s*\\d{6}\\s*$", message = "Enter the 6-digit code from the email")
     private String code;
 
-    /** 'signup' or 'forgot_password' */
     @NotBlank(message = "Purpose is required")
+    @Pattern(regexp = "^(signup|forgot_password)$", message = "Purpose must be signup or forgot_password")
     private String purpose;
 }

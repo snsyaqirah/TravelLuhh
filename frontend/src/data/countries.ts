@@ -1,109 +1,184 @@
-import { Country } from '@/types';
+// Destination catalogue: 45 countries with currency, capital, season flag and region (spec §2.5, §5.4, §9.5).
+// Countries show as ISO code chips (components/glyphs/CountryChip), never flags. Season logic lives in lib/season,
+// money formatting in lib/money, the currency list in lib/currency.
+import type { Country, Region } from '@/types';
+import { CATEGORY_ORDER, categoryColorVar } from '@/design/tokens';
+import { CATEGORY_CODES, CATEGORY_LABELS } from '@/lib/categories';
+import { CURRENCIES } from '@/lib/currency';
+import { currencyPrefix } from '@/lib/money';
+import { categoryGlyph, type ExpenseGlyph, type GlyphName } from '@/components/glyphs/names';
 
-// Countries with seasons (temperate climates)
-export const countries: Country[] = [
-  { code: 'US', name: 'United States', hasSeason: true, currency: 'USD' },
-  { code: 'GB', name: 'United Kingdom', hasSeason: true, currency: 'GBP' },
-  { code: 'DE', name: 'Germany', hasSeason: true, currency: 'EUR' },
-  { code: 'FR', name: 'France', hasSeason: true, currency: 'EUR' },
-  { code: 'IT', name: 'Italy', hasSeason: true, currency: 'EUR' },
-  { code: 'ES', name: 'Spain', hasSeason: true, currency: 'EUR' },
-  { code: 'JP', name: 'Japan', hasSeason: true, currency: 'JPY' },
-  { code: 'CA', name: 'Canada', hasSeason: true, currency: 'CAD' },
-  { code: 'AU', name: 'Australia', hasSeason: true, currency: 'AUD' },
-  { code: 'NZ', name: 'New Zealand', hasSeason: true, currency: 'NZD' },
-  { code: 'KR', name: 'South Korea', hasSeason: true, currency: 'KRW' },
-  { code: 'NL', name: 'Netherlands', hasSeason: true, currency: 'EUR' },
-  { code: 'BE', name: 'Belgium', hasSeason: true, currency: 'EUR' },
-  { code: 'CH', name: 'Switzerland', hasSeason: true, currency: 'CHF' },
-  { code: 'AT', name: 'Austria', hasSeason: true, currency: 'EUR' },
-  { code: 'SE', name: 'Sweden', hasSeason: true, currency: 'SEK' },
-  { code: 'NO', name: 'Norway', hasSeason: true, currency: 'NOK' },
-  { code: 'DK', name: 'Denmark', hasSeason: true, currency: 'DKK' },
-  { code: 'FI', name: 'Finland', hasSeason: true, currency: 'EUR' },
-  { code: 'IE', name: 'Ireland', hasSeason: true, currency: 'EUR' },
-  { code: 'PT', name: 'Portugal', hasSeason: true, currency: 'EUR' },
-  { code: 'GR', name: 'Greece', hasSeason: true, currency: 'EUR' },
-  { code: 'PL', name: 'Poland', hasSeason: true, currency: 'PLN' },
-  { code: 'CZ', name: 'Czech Republic', hasSeason: true, currency: 'CZK' },
-  // Tropical countries (no traditional seasons)
-  { code: 'TH', name: 'Thailand', hasSeason: false, currency: 'THB' },
-  { code: 'VN', name: 'Vietnam', hasSeason: false, currency: 'VND' },
-  { code: 'ID', name: 'Indonesia', hasSeason: false, currency: 'IDR' },
-  { code: 'MY', name: 'Malaysia', hasSeason: false, currency: 'MYR' },
-  { code: 'SG', name: 'Singapore', hasSeason: false, currency: 'SGD' },
-  { code: 'PH', name: 'Philippines', hasSeason: false, currency: 'PHP' },
-  { code: 'MX', name: 'Mexico', hasSeason: false, currency: 'MXN' },
-  { code: 'BR', name: 'Brazil', hasSeason: false, currency: 'BRL' },
-  { code: 'CO', name: 'Colombia', hasSeason: false, currency: 'COP' },
-  { code: 'PE', name: 'Peru', hasSeason: false, currency: 'PEN' },
-  { code: 'AR', name: 'Argentina', hasSeason: true, currency: 'ARS' },
-  { code: 'CL', name: 'Chile', hasSeason: true, currency: 'CLP' },
-  { code: 'EG', name: 'Egypt', hasSeason: false, currency: 'EGP' },
-  { code: 'MA', name: 'Morocco', hasSeason: false, currency: 'MAD' },
-  { code: 'ZA', name: 'South Africa', hasSeason: true, currency: 'ZAR' },
-  { code: 'AE', name: 'United Arab Emirates', hasSeason: false, currency: 'AED' },
-  { code: 'IN', name: 'India', hasSeason: false, currency: 'INR' },
-  { code: 'CN', name: 'China', hasSeason: true, currency: 'CNY' },
-  { code: 'TW', name: 'Taiwan', hasSeason: true, currency: 'TWD' },
-  { code: 'HK', name: 'Hong Kong', hasSeason: false, currency: 'HKD' },
+/** A destination always has a region (stamp shape) and a capital (trip-name suggestion). */
+export type Destination = Country & { region: Region; capital: string };
+
+const c = (code: string, name: string, currency: string, hasSeason: boolean, region: Region, capital: string): Destination => ({
+  code,
+  name,
+  currency,
+  hasSeason,
+  region,
+  capital,
+});
+
+export const countries: Destination[] = [
+  // Asia (PassportStamp circle)
+  c('MY', 'Malaysia', 'MYR', false, 'asia', 'Kuala Lumpur'),
+  c('SG', 'Singapore', 'SGD', false, 'asia', 'Singapore'),
+  c('TH', 'Thailand', 'THB', false, 'asia', 'Bangkok'),
+  c('ID', 'Indonesia', 'IDR', false, 'asia', 'Jakarta'),
+  c('VN', 'Vietnam', 'VND', false, 'asia', 'Hanoi'),
+  c('PH', 'Philippines', 'PHP', false, 'asia', 'Manila'),
+  c('JP', 'Japan', 'JPY', true, 'asia', 'Tokyo'),
+  c('KR', 'South Korea', 'KRW', true, 'asia', 'Seoul'),
+  c('CN', 'China', 'CNY', true, 'asia', 'Beijing'),
+  c('TW', 'Taiwan', 'TWD', true, 'asia', 'Taipei'),
+  c('HK', 'Hong Kong', 'HKD', false, 'asia', 'Hong Kong'),
+  c('IN', 'India', 'INR', false, 'asia', 'New Delhi'),
+  // Europe (rectangle)
+  c('GB', 'United Kingdom', 'GBP', true, 'europe', 'London'),
+  c('IE', 'Ireland', 'EUR', true, 'europe', 'Dublin'),
+  c('FR', 'France', 'EUR', true, 'europe', 'Paris'),
+  c('DE', 'Germany', 'EUR', true, 'europe', 'Berlin'),
+  c('NL', 'Netherlands', 'EUR', true, 'europe', 'Amsterdam'),
+  c('BE', 'Belgium', 'EUR', true, 'europe', 'Brussels'),
+  c('CH', 'Switzerland', 'CHF', true, 'europe', 'Bern'),
+  c('AT', 'Austria', 'EUR', true, 'europe', 'Vienna'),
+  c('IT', 'Italy', 'EUR', true, 'europe', 'Rome'),
+  c('ES', 'Spain', 'EUR', true, 'europe', 'Madrid'),
+  c('PT', 'Portugal', 'EUR', true, 'europe', 'Lisbon'),
+  c('GR', 'Greece', 'EUR', true, 'europe', 'Athens'),
+  c('CZ', 'Czech Republic', 'CZK', true, 'europe', 'Prague'),
+  c('PL', 'Poland', 'PLN', true, 'europe', 'Warsaw'),
+  c('SE', 'Sweden', 'SEK', true, 'europe', 'Stockholm'),
+  c('NO', 'Norway', 'NOK', true, 'europe', 'Oslo'),
+  c('DK', 'Denmark', 'DKK', true, 'europe', 'Copenhagen'),
+  c('FI', 'Finland', 'EUR', true, 'europe', 'Helsinki'),
+  // Americas (octagon)
+  c('US', 'United States', 'USD', true, 'americas', 'Washington, D.C.'),
+  c('CA', 'Canada', 'CAD', true, 'americas', 'Ottawa'),
+  c('MX', 'Mexico', 'MXN', false, 'americas', 'Mexico City'),
+  c('BR', 'Brazil', 'BRL', false, 'americas', 'Brasília'),
+  c('AR', 'Argentina', 'ARS', true, 'americas', 'Buenos Aires'),
+  c('CL', 'Chile', 'CLP', true, 'americas', 'Santiago'),
+  c('CO', 'Colombia', 'COP', false, 'americas', 'Bogotá'),
+  c('PE', 'Peru', 'PEN', false, 'americas', 'Lima'),
+  // Africa and the Middle East (triangle)
+  c('AE', 'United Arab Emirates', 'AED', false, 'africa_me', 'Abu Dhabi'),
+  c('SA', 'Saudi Arabia', 'SAR', false, 'africa_me', 'Riyadh'),
+  c('EG', 'Egypt', 'EGP', false, 'africa_me', 'Cairo'),
+  c('MA', 'Morocco', 'MAD', false, 'africa_me', 'Rabat'),
+  c('ZA', 'South Africa', 'ZAR', true, 'africa_me', 'Pretoria'),
+  // Oceania (oval)
+  c('AU', 'Australia', 'AUD', true, 'oceania', 'Canberra'),
+  c('NZ', 'New Zealand', 'NZD', true, 'oceania', 'Wellington'),
 ];
 
-export const currencies = [
-  { code: 'USD', name: 'US Dollar', symbol: '$' },
-  { code: 'EUR', name: 'Euro', symbol: '€' },
-  { code: 'GBP', name: 'British Pound', symbol: '£' },
-  { code: 'JPY', name: 'Japanese Yen', symbol: '¥' },
-  { code: 'CAD', name: 'Canadian Dollar', symbol: 'C$' },
-  { code: 'AUD', name: 'Australian Dollar', symbol: 'A$' },
-  { code: 'CHF', name: 'Swiss Franc', symbol: 'CHF' },
-  { code: 'CNY', name: 'Chinese Yuan', symbol: '¥' },
-  { code: 'INR', name: 'Indian Rupee', symbol: '₹' },
-  { code: 'KRW', name: 'South Korean Won', symbol: '₩' },
-  { code: 'THB', name: 'Thai Baht', symbol: '฿' },
-  { code: 'SGD', name: 'Singapore Dollar', symbol: 'S$' },
-  { code: 'MXN', name: 'Mexican Peso', symbol: '$' },
-  { code: 'BRL', name: 'Brazilian Real', symbol: 'R$' },
-  { code: 'MYR', name: 'Malaysian Ringgit', symbol: 'RM' },
-  { code: 'NZD', name: 'New Zealand Dollar', symbol: 'NZ$' },
-  { code: 'HKD', name: 'Hong Kong Dollar', symbol: 'HK$' },
-  { code: 'SEK', name: 'Swedish Krona', symbol: 'kr' },
-  { code: 'NOK', name: 'Norwegian Krone', symbol: 'kr' },
-  { code: 'DKK', name: 'Danish Krone', symbol: 'kr' },
-  { code: 'PLN', name: 'Polish Zloty', symbol: 'zł' },
-  { code: 'PHP', name: 'Philippine Peso', symbol: '₱' },
-  { code: 'IDR', name: 'Indonesian Rupiah', symbol: 'Rp' },
-  { code: 'VND', name: 'Vietnamese Dong', symbol: '₫' },
-  { code: 'AED', name: 'UAE Dirham', symbol: 'د.إ' },
-  { code: 'ZAR', name: 'South African Rand', symbol: 'R' },
-  { code: 'TWD', name: 'Taiwan Dollar', symbol: 'NT$' },
-];
+/** "Popular from MY" chips on Create step 1 (§9.5). */
+export const POPULAR_FROM_MY: readonly string[] = ['JP', 'KR', 'TH', 'ID', 'SG', 'VN', 'CN', 'AU'];
 
-export const expenseCategories = [
-  { value: 'accommodation', label: 'Accommodation', icon: '🏨', color: '#4F46E5' },
-  { value: 'transportation', label: 'Transportation', icon: '✈️', color: '#0891B2' },
-  { value: 'food', label: 'Food & Dining', icon: '🍽️', color: '#EA580C' },
-  { value: 'activities', label: 'Activities', icon: '🎯', color: '#16A34A' },
-  { value: 'shopping', label: 'Shopping', icon: '🛍️', color: '#DB2777' },
-  { value: 'bundle', label: 'Package / Bundle', icon: '🎁', color: '#7C3AED' },
-  { value: 'other', label: 'Other', icon: '📦', color: '#6B7280' },
-];
+export const REGION_LABELS: Record<Region, string> = {
+  asia: 'Asia',
+  europe: 'Europe',
+  americas: 'Americas',
+  africa_me: 'Africa & Middle East',
+  oceania: 'Oceania',
+};
 
-export const seasons = [
-  { value: 'spring', label: 'Spring', icon: '🌸' },
-  { value: 'summer', label: 'Summer', icon: '☀️' },
-  { value: 'autumn', label: 'Autumn', icon: '🍂' },
-  { value: 'winter', label: 'Winter', icon: '❄️' },
-];
+const BY_CODE = new Map(countries.map((x) => [x.code, x]));
 
-export function getCountryByCode(code: string): Country | undefined {
-  return countries.find((c) => c.code === code);
+export function getCountryByCode(code: string | null | undefined): Destination | undefined {
+  return code ? BY_CODE.get(code.trim().toUpperCase()) : undefined;
 }
 
+/** Region for a stamp shape; null for codes outside the catalogue. */
+export function getRegion(code: string | null | undefined): Region | null {
+  return getCountryByCode(code)?.region ?? null;
+}
+
+// Names people actually type, including the Malay ones.
+const ALIASES: Record<string, string[]> = {
+  JP: ['jepun', 'nihon'],
+  KR: ['korea', 'korea selatan'],
+  CN: ['china', 'beijing', 'shanghai'],
+  TH: ['siam', 'bangkok', 'phuket'],
+  ID: ['bali', 'jakarta'],
+  VN: ['viet nam', 'saigon', 'ho chi minh'],
+  GB: ['uk', 'england', 'britain', 'great britain', 'scotland', 'london'],
+  US: ['usa', 'america', 'amerika syarikat', 'new york'],
+  AE: ['uae', 'dubai', 'emiriah arab bersatu'],
+  SA: ['saudi', 'arab saudi', 'makkah', 'mekah', 'mecca', 'madinah', 'medina', 'jeddah', 'umrah'],
+  NL: ['holland'],
+  CZ: ['czechia'],
+  CH: ['swiss'],
+  TW: ['taipei'],
+  AU: ['sydney', 'melbourne'],
+};
+
+const fold = (s: string) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim();
+
+/**
+ * Countries matching a search query by name, code, capital, currency or a common alias. Prefix matches on the
+ * name or code rank first. An empty query returns the whole list.
+ */
+export function searchCountries(query: string): Destination[] {
+  const q = fold(query);
+  if (!q) return countries.slice();
+  const scored = countries
+    .map((x) => {
+      const name = fold(x.name);
+      const code = x.code.toLowerCase();
+      const hay = [fold(x.capital), x.currency.toLowerCase(), ...(ALIASES[x.code] ?? [])];
+      const score =
+        code === q || name.startsWith(q) ? 0 : name.includes(q) ? 1 : hay.some((h) => h.startsWith(q)) ? 2 : hay.some((h) => h.includes(q)) ? 3 : -1;
+      return { x, score };
+    })
+    .filter((s) => s.score >= 0);
+  return scored.sort((a, b) => a.score - b.score || a.x.name.localeCompare(b.x.name)).map((s) => s.x);
+}
+
+/**
+ * Currency pickers. Same list and order as lib/currency (MYR first). `symbol` is the unambiguous prefix from
+ * lib/money ('RM', '¥', or the ISO code), never a bare '$'.
+ */
+export const currencies: { code: string; name: string; symbol: string }[] = CURRENCIES.map((x) => ({
+  code: x.code,
+  name: x.name,
+  symbol: x.prefix,
+}));
+
+/**
+ * @deprecated Use CATEGORIES / CATEGORY_META from data/categories and render `<CategoryGlyph>`.
+ * Kept so older screens build: `icon` is now the three-letter code (no emoji) and `color` is the theme-aware
+ * `hsl(var(--cat-x))` (no hex), in the fixed category order.
+ */
+export const expenseCategories: { value: string; label: string; icon: string; color: string; code: string; glyph: ExpenseGlyph }[] =
+  CATEGORY_ORDER.map((key) => ({
+    value: key,
+    label: CATEGORY_LABELS[key],
+    icon: CATEGORY_CODES[key],
+    color: categoryColorVar(key),
+    code: CATEGORY_CODES[key],
+    glyph: categoryGlyph(key),
+  }));
+
+/**
+ * @deprecated Use SEASON_META from data/seasons (it includes Tropical). `icon` is empty now; render
+ * `<IsoGlyph name={season.glyph}>` instead.
+ */
+export const seasons: { value: string; label: string; icon: string; glyph: GlyphName }[] = [
+  { value: 'spring', label: 'Spring', icon: '', glyph: 'season-spring' },
+  { value: 'summer', label: 'Summer', icon: '', glyph: 'season-summer' },
+  { value: 'autumn', label: 'Autumn', icon: '', glyph: 'season-autumn' },
+  { value: 'winter', label: 'Winter', icon: '', glyph: 'season-winter' },
+];
+
+/** @deprecated Use formatMoney / currencyPrefix from lib/money. Returns the same unambiguous prefix. */
 export function getCurrencySymbol(code: string): string {
-  return currencies.find((c) => c.code === code)?.symbol || code;
+  return currencyPrefix(code) || code;
 }
 
+/** @deprecated Use categoryColor from data/categories. Returns `hsl(var(--cat-x))`; unknown values are Other. */
 export function getCategoryColor(category: string): string {
-  return expenseCategories.find((c) => c.value === category)?.color || '#6B7280';
+  const key = (CATEGORY_ORDER as readonly string[]).includes(category) ? (category as (typeof CATEGORY_ORDER)[number]) : 'other';
+  return categoryColorVar(key);
 }

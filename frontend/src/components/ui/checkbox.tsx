@@ -1,9 +1,11 @@
 import * as React from "react";
 import * as CheckboxPrimitive from "@radix-ui/react-checkbox";
-import { Check } from "lucide-react";
+import { Check, Minus } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 
+// 20px square, 2px radius, 1.5px field border; checked is a fund box with an on-fund tick (§5.3).
+// The ::after extends the hit area to 44px without changing layout.
 const Checkbox = React.forwardRef<
   React.ElementRef<typeof CheckboxPrimitive.Root>,
   React.ComponentPropsWithoutRef<typeof CheckboxPrimitive.Root>
@@ -11,13 +13,17 @@ const Checkbox = React.forwardRef<
   <CheckboxPrimitive.Root
     ref={ref}
     className={cn(
-      "peer h-4 w-4 shrink-0 rounded-sm border border-primary ring-offset-background data-[state=checked]:bg-primary data-[state=checked]:text-primary-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50",
+      "peer relative h-5 w-5 shrink-0 rounded-sm border-[1.5px] border-field bg-leaf text-on-fund transition-colors duration-micro ease-out after:absolute after:-inset-3 after:content-[''] hover:border-ink disabled:cursor-not-allowed disabled:opacity-50 data-[state=checked]:border-fund data-[state=indeterminate]:border-fund data-[state=checked]:bg-fund data-[state=indeterminate]:bg-fund",
       className,
     )}
     {...props}
   >
-    <CheckboxPrimitive.Indicator className={cn("flex items-center justify-center text-current")}>
-      <Check className="h-4 w-4" />
+    <CheckboxPrimitive.Indicator className="flex items-center justify-center text-current">
+      {props.checked === "indeterminate" ? (
+        <Minus className="h-3.5 w-3.5" strokeWidth={3} />
+      ) : (
+        <Check className="h-3.5 w-3.5" strokeWidth={3} />
+      )}
     </CheckboxPrimitive.Indicator>
   </CheckboxPrimitive.Root>
 ));

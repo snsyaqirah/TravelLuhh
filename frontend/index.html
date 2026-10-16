@@ -2,21 +2,52 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <!-- TODO: Set the document title to the name of your application -->
-    <title>TravelLuhh</title>
-    <meta name="description" content="Your Travel Planning Companion" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <title>TravelLuhh — every trip starts as a tabung</title>
+    <meta
+      name="description"
+      content="Set a target, then spend through it on the road. Every ringgit accounted for, in whatever currency you're paying in."
+    />
     <meta name="author" content="TravelLuhh" />
+    <meta name="color-scheme" content="light dark" />
+    <meta name="theme-color" content="#F3EEE3" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#121815" media="(prefers-color-scheme: dark)" />
 
-    <!-- TODO: Update og:title to match your application name -->
-    <meta property="og:title" content="TravelLuhh" />
-    <meta property="og:description" content="Your Travel Planning Companion" />
+    <meta property="og:title" content="TravelLuhh — every trip starts as a tabung" />
+    <meta
+      property="og:description"
+      content="Set a target, then spend through it on the road. Every ringgit accounted for, in whatever currency you're paying in."
+    />
     <meta property="og:type" content="website" />
-    <meta property="og:image" content="https://travelluhh.app/og-image.png" />
+    <meta name="twitter:card" content="summary" />
 
-    <meta name="twitter:card" content="summary_large_image" />
-    <meta name="twitter:site" content="@TravelLuhh" />
-    <meta name="twitter:image" content="https://travelluhh.app/og-image.png" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="icon" href="/favicon.ico" sizes="32x32" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+
+    <!-- Newsreader is pinned at opsz 36 with one italic (500): the full 6..72 optical axis alone is ~270 KB of
+         latin woff2. This set is ~172 KB in total (Newsreader 82, Schibsted Grotesk 46, IBM Plex Mono 44). -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,36,500;0,36,600;1,36,500&family=Schibsted+Grotesk:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap"
+    />
+
+    <!-- Apply the saved theme before first paint so dark mode never flashes light. Mirrors next-themes (storageKey travelluhh_theme). -->
+    <script>
+      (function () {
+        try {
+          var saved = localStorage.getItem("travelluhh_theme");
+          var dark =
+            saved === "dark" ||
+            ((!saved || saved === "system") && window.matchMedia("(prefers-color-scheme: dark)").matches);
+          var root = document.documentElement;
+          root.classList.add(dark ? "dark" : "light");
+          root.style.colorScheme = dark ? "dark" : "light";
+        } catch (e) {}
+      })();
+    </script>
   </head>
 
   <body>

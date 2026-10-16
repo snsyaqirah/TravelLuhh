@@ -5,139 +5,419 @@ import com.travelluhh.dto.expense.ExpenseResponse;
 import com.travelluhh.entity.Expense;
 import com.travelluhh.entity.ExpenseSubItem;
 import com.travelluhh.entity.Trip;
+import com.travelluhh.entity.TripMember.MemberRole;
 import com.travelluhh.entity.User;
+import com.travelluhh.exception.BadRequestException;
+import com.travelluhh.exception.NotFoundException;
 import com.travelluhh.repository.ExpenseRepository;
 import com.travelluhh.repository.ExpenseSubItemRepository;
-import com.travelluhh.repository.TripRepository;
+import com.travelluhh.repository.TripMemberRepository;
 import com.travelluhh.repository.UserRepository;
+import com.travelluhh.util.Decimals;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.util.Collections;
+import java.math.BigDecimal;
+import java.math.RoundingMode;
+import java.time.LocalDate;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
+import java.util.function.Function;
 import java.util.stream.Collectors;
 
+/**
+ * Expenses are stored in the trip currency so trg_update_trip_spent can sum them as-is.
+ * The trigger also keeps trips.spent_amount current after every insert/update/delete here;
+ * nothing in this service reads the Trip's spent columns after a mutation.
+ */
+@Slf4j
 @Service
 @RequiredArgsConstructor
 @Transactional
 public class ExpenseService {
 
+    static final String EXPENSE_NOT_FOUND = "Expense not found";
+    static final String CONVERT_FIRST = "Convert to trip currency first";
+    static final String AMOUNT_DIGITS = "Amount can have at most 10 digits and 2 decimals";
+    static final String ORIGINAL_AMOUNT_DIGITS = "Original amount can have at most 10 digits";
+    static final String FX_RATE_DIGITS = "Exchange rate can have at most 10 digits before the point and 16 after it";
+    static final String SUB_ITEM_AMOUNT_DIGITS = "Sub-item amount can have at most 10 digits and 2 decimals";
+
+    /** Digits before the point for money and rates: amount is DECIMAL(12, 2), fx_rate DECIMAL(18, 8). */
+    static final int MAX_INTEGER_DIGITS = 10;
+    /**
+     * Decimals a money value may arrive with before it is rounded to 2. The DTO is stricter (2, or 4
+     * for originalAmount); this bound only keeps rounding cheap for any caller.
+     */
+    static final int MAX_MONEY_DECIMALS = 4;
+    /**
+     * Decimals an fxRate may arrive with before it is rounded to 8. The client sends rates with 8
+     * significant digits (0.030854674 for JPY to MYR), so a rate as small as 0.00000001 needs 16.
+     */
+    static final int MAX_RATE_DECIMALS = 16;
+
     private final ExpenseRepository expenseRepository;
     private final ExpenseSubItemRepository subItemRepository;
-    private final TripRepository tripRepository;
     private final UserRepository userRepository;
+    private final TripMemberRepository tripMemberRepository;
+    private final TripAccessService tripAccess;
     private final ActivityService activityService;
 
+    // ── Commands ─────────────────────────────────────────────────────────────
+
     public ExpenseResponse createExpense(CreateExpenseRequest request, String userEmail) {
-        // Verify trip exists
-        Trip trip = tripRepository.findById(request.getTripId())
-                .orElseThrow(() -> new RuntimeException("Trip not found"));
+        User user = tripAccess.currentUser(userEmail);
+        Trip trip = tripAccess.requireEditor(request.getTripId(), user);
 
-        // Get user by email
-        User user = userRepository.findByEmail(userEmail)
-                .orElseThrow(() -> new RuntimeException("User not found"));
+        Money money = resolveMoney(request, trip.getCurrency());
+        requireSubItemSizes(request.getSubItems());
+        Long paidBy = request.getPaidBy() != null ? requireMemberPayer(trip, request.getPaidBy()) : user.getId();
 
-        // Create expense
         Expense expense = Expense.builder()
                 .trip(trip)
                 .addedBy(user.getId())
-                .description(request.getDescription())
-                .amount(request.getAmount())
-                .currency(request.getCurrency())
+                .paidBy(paidBy)
+                .description(request.getDescription().trim())
                 .category(request.getCategory())
                 .expenseDate(request.getExpenseDate())
+                .notes(blankToNull(request.getNotes()))
                 .build();
-
+        money.applyTo(expense);
         expense = expenseRepository.save(expense);
-        try {
-            activityService.logExpenseAdded(trip.getId(), user.getId(), user.getName(),
-                    request.getDescription(), request.getAmount(), request.getCurrency());
-        } catch (Exception ignored) {}
 
-        if (request.getSubItems() != null && !request.getSubItems().isEmpty()) {
-            final Long expenseId = expense.getId();
-            List<ExpenseSubItem> subItems = request.getSubItems().stream()
-                    .map(s -> ExpenseSubItem.builder()
-                            .expenseId(expenseId)
-                            .description(s.getDescription())
-                            .amount(s.getAmount())
-                            .category(s.getCategory())
-                            .build())
-                    .collect(Collectors.toList());
-            subItemRepository.saveAll(subItems);
-        }
+        List<ExpenseSubItem> subItems = saveSubItems(expense.getId(), request.getSubItems());
 
-        return mapToResponse(expense);
+        Map<Long, User> users = usersById(List.of(expense));
+        logActivity(trip.getId(), user, "expense_added", addedText(user, expense, users));
+        return toResponse(expense, subItems, users);
     }
 
-    public List<ExpenseResponse> getExpensesByTrip(Long tripId) {
-        return expenseRepository.findByTripIdOrderByExpenseDateDesc(tripId)
-                .stream()
-                .map(this::mapToResponse)
-                .collect(Collectors.toList());
+    /**
+     * PUT semantics: every field is replaced, except paidBy (omitted keeps the payer) and subItems (null keeps them).
+     * Re-sending the current payer keeps them too, even if they have since left the trip.
+     */
+    public ExpenseResponse updateExpense(Long expenseId, CreateExpenseRequest request, String userEmail) {
+        User user = tripAccess.currentUser(userEmail);
+        Expense expense = expenseRepository.findById(expenseId)
+                .orElseThrow(() -> new NotFoundException(EXPENSE_NOT_FOUND));
+        Long tripId = expense.getTrip().getId();
+        Trip trip = tripAccess.require(tripId, user, MemberRole.editor, EXPENSE_NOT_FOUND).trip();
+
+        if (request.getTripId() != null && !request.getTripId().equals(tripId)) {
+            throw new BadRequestException("An expense can't move to another trip");
+        }
+
+        Money money = resolveMoney(request, trip.getCurrency());
+        requireSubItemSizes(request.getSubItems());
+        // The client sends back the paidBy it was given (the effective payer); that's not a change.
+        boolean payerUnchanged = request.getPaidBy() == null
+                || Objects.equals(request.getPaidBy(), expense.effectivePayerId());
+        Long paidBy = payerUnchanged ? expense.getPaidBy() : requireMemberPayer(trip, request.getPaidBy());
+
+        Snapshot before = Snapshot.of(expense);
+        expense.setDescription(request.getDescription().trim());
+        expense.setCategory(request.getCategory());
+        expense.setExpenseDate(request.getExpenseDate());
+        expense.setNotes(blankToNull(request.getNotes()));
+        expense.setPaidBy(paidBy);
+        money.applyTo(expense);
+        expense = expenseRepository.saveAndFlush(expense);
+
+        List<ExpenseSubItem> subItems;
+        if (request.getSubItems() != null) {
+            subItemRepository.deleteByExpenseId(expense.getId());
+            subItems = saveSubItems(expense.getId(), request.getSubItems());
+        } else {
+            subItems = subItemRepository.findByExpenseId(expense.getId());
+        }
+
+        Map<Long, User> users = usersById(List.of(expense));
+        logActivity(tripId, user, "expense_updated", updatedText(user, before, expense, users));
+        return toResponse(expense, subItems, users);
     }
 
     public void deleteExpense(Long expenseId, String userEmail) {
+        User user = tripAccess.currentUser(userEmail);
         Expense expense = expenseRepository.findById(expenseId)
-                .orElseThrow(() -> new RuntimeException("Expense not found"));
+                .orElseThrow(() -> new NotFoundException(EXPENSE_NOT_FOUND));
+        Long tripId = expense.getTrip().getId();
+        tripAccess.require(tripId, user, MemberRole.editor, EXPENSE_NOT_FOUND);
 
-        // Get user by email
-        User user = userRepository.findByEmail(userEmail)
-                .orElseThrow(() -> new RuntimeException("User not found"));
-
-        // Only the person who paid or trip owner can delete
-        if (!expense.getAddedBy().equals(user.getId())) {
-            Trip trip = expense.getTrip();
-            if (!trip.getOwnerId().equals(user.getId())) {
-                throw new RuntimeException("Access denied");
-            }
-        }
-
-        try {
-            activityService.logExpenseDeleted(expense.getTrip().getId(), user.getId(), user.getName(), expense.getDescription());
-        } catch (Exception ignored) {}
+        String text = displayName(user) + " removed " + quote(expense.getDescription())
+                + " (" + formatMoney(expense.getAmount(), expense.getCurrency()) + ")";
         expenseRepository.delete(expense);
+        logActivity(tripId, user, "expense_deleted", text);
     }
 
-    private ExpenseResponse mapToResponse(Expense expense) {
-        User addedByUser = expense.getAddedBy() != null
-                ? userRepository.findById(expense.getAddedBy()).orElse(null)
-                : null;
+    // ── Queries ──────────────────────────────────────────────────────────────
 
-        ExpenseResponse.PaidByDto addedByDto = null;
-        if (addedByUser != null) {
-            addedByDto = ExpenseResponse.PaidByDto.builder()
-                    .id(addedByUser.getId())
-                    .name(addedByUser.getName())
-                    .email(addedByUser.getEmail())
-                    .avatar(addedByUser.getAvatar())
-                    .build();
+    @Transactional(readOnly = true)
+    public List<ExpenseResponse> getExpensesByTrip(Long tripId, String userEmail) {
+        tripAccess.requireMember(tripId, userEmail);
+        List<Expense> expenses = expenseRepository.findLedger(tripId);
+        if (expenses.isEmpty()) {
+            return List.of();
         }
 
-        List<ExpenseResponse.SubItemDto> subItemDtos = subItemRepository.findByExpenseId(expense.getId())
-                .stream()
-                .map(s -> ExpenseResponse.SubItemDto.builder()
-                        .id(s.getId())
-                        .description(s.getDescription())
-                        .amount(s.getAmount())
+        // Three queries for the whole ledger: expenses, sub-items, users.
+        List<Long> ids = expenses.stream().map(Expense::getId).toList();
+        Map<Long, List<ExpenseSubItem>> subItems = subItemRepository.findByExpenseIdInOrderByIdAsc(ids).stream()
+                .collect(Collectors.groupingBy(ExpenseSubItem::getExpenseId));
+        Map<Long, User> users = usersById(expenses);
+
+        return expenses.stream()
+                .map(e -> toResponse(e, subItems.getOrDefault(e.getId(), List.of()), users))
+                .toList();
+    }
+
+    // ── Money rules ──────────────────────────────────────────────────────────
+
+    /** What gets stored. amount/currency are always in the trip currency. */
+    record Money(BigDecimal amount, String currency, BigDecimal originalAmount,
+                 String originalCurrency, BigDecimal fxRate) {
+
+        void applyTo(Expense expense) {
+            expense.setAmount(amount);
+            expense.setCurrency(currency);
+            expense.setConvertedAmount(amount);
+            expense.setOriginalAmount(originalAmount);
+            expense.setOriginalCurrency(originalCurrency);
+            expense.setFxRate(fxRate);
+        }
+    }
+
+    /**
+     * Contract rules (API.md, Expenses):
+     * - amount is in the trip currency; the stored currency is always the trip currency.
+     * - No originalAmount: currency must be the trip currency (else 400 "Convert to trip currency
+     *   first") and the original is the amount itself.
+     * - originalAmount given: originalCurrency defaults to the request currency. If that is the trip
+     *   currency the original is the amount itself; otherwise fxRate is kept (8 dp) or derived as
+     *   amount / originalAmount.
+     */
+    static Money resolveMoney(CreateExpenseRequest request, String tripCurrencyRaw) {
+        // Size checks before any setScale/divide: rounding 1e-20000000 would burn seconds of CPU.
+        requireSize(request.getAmount(), MAX_MONEY_DECIMALS, AMOUNT_DIGITS);
+        requireSize(request.getOriginalAmount(), MAX_MONEY_DECIMALS, ORIGINAL_AMOUNT_DIGITS);
+        requireSize(request.getFxRate(), MAX_RATE_DECIMALS, FX_RATE_DIGITS);
+
+        String requestCurrency = upper(request.getCurrency());
+        // Legacy trips may have no currency; then the request's currency is the trip currency.
+        String tripCurrency = upper(tripCurrencyRaw) != null ? upper(tripCurrencyRaw) : requestCurrency;
+        if (tripCurrency == null) {
+            throw new BadRequestException("Currency is required");
+        }
+        BigDecimal amount = request.getAmount().setScale(2, RoundingMode.HALF_UP);
+        if (amount.signum() <= 0) {
+            throw new BadRequestException("Amount must be greater than 0");
+        }
+
+        String originalCurrency = upper(request.getOriginalCurrency());
+        if (request.getOriginalAmount() == null) {
+            boolean foreign = !tripCurrency.equals(requestCurrency)
+                    || (originalCurrency != null && !tripCurrency.equals(originalCurrency));
+            if (foreign) {
+                throw new BadRequestException(CONVERT_FIRST);
+            }
+            return new Money(amount, tripCurrency, amount, tripCurrency, null);
+        }
+
+        if (originalCurrency == null) {
+            originalCurrency = requestCurrency;
+        }
+        if (tripCurrency.equals(originalCurrency)) {
+            return new Money(amount, tripCurrency, amount, tripCurrency, null);
+        }
+
+        BigDecimal original = request.getOriginalAmount().setScale(2, RoundingMode.HALF_UP);
+        if (original.signum() <= 0) {
+            throw new BadRequestException("Original amount must be greater than 0");
+        }
+        BigDecimal fxRate = request.getFxRate() != null
+                ? request.getFxRate().setScale(8, RoundingMode.HALF_UP)
+                : amount.divide(original, 8, RoundingMode.HALF_UP);
+        if (fxRate.signum() <= 0) {
+            throw new BadRequestException("Exchange rate must be greater than 0");
+        }
+        return new Money(amount, tripCurrency, original, originalCurrency, fxRate);
+    }
+
+    /** 400 unless value (when present) has at most 10 digits before the point and maxDecimals after it. */
+    private static void requireSize(BigDecimal value, int maxDecimals, String message) {
+        if (!Decimals.fits(value, MAX_INTEGER_DIGITS, maxDecimals)) {
+            throw new BadRequestException(message);
+        }
+    }
+
+    /** Same size check for every sub-item amount, before the expense is written. */
+    private static void requireSubItemSizes(List<CreateExpenseRequest.SubItemRequest> subItems) {
+        if (subItems == null) {
+            return;
+        }
+        for (CreateExpenseRequest.SubItemRequest s : subItems) {
+            if (s != null) {
+                requireSize(s.getAmount(), MAX_MONEY_DECIMALS, SUB_ITEM_AMOUNT_DIGITS);
+            }
+        }
+    }
+
+    /** paidBy must be the owner or someone with a trip_members row. */
+    private Long requireMemberPayer(Trip trip, Long paidBy) {
+        if (Objects.equals(paidBy, trip.getOwnerId())
+                || tripMemberRepository.existsByTripIdAndUserId(trip.getId(), paidBy)) {
+            return paidBy;
+        }
+        throw new BadRequestException("Paid by must be someone on this trip");
+    }
+
+    // ── Mapping ──────────────────────────────────────────────────────────────
+
+    private List<ExpenseSubItem> saveSubItems(Long expenseId, List<CreateExpenseRequest.SubItemRequest> requests) {
+        if (requests == null || requests.isEmpty()) {
+            return List.of();
+        }
+        List<ExpenseSubItem> subItems = requests.stream()
+                .map(s -> ExpenseSubItem.builder()
+                        .expenseId(expenseId)
+                        .description(s.getDescription().trim())
+                        .amount(s.getAmount().setScale(2, RoundingMode.HALF_UP))
                         .category(s.getCategory())
                         .build())
-                .collect(Collectors.toList());
+                .collect(Collectors.toCollection(ArrayList::new));
+        return subItemRepository.saveAll(subItems);
+    }
 
+    private Map<Long, User> usersById(Collection<Expense> expenses) {
+        Set<Long> ids = new HashSet<>();
+        for (Expense e : expenses) {
+            if (e.getAddedBy() != null) ids.add(e.getAddedBy());
+            if (e.effectivePayerId() != null) ids.add(e.effectivePayerId());
+        }
+        if (ids.isEmpty()) {
+            return Map.of();
+        }
+        return userRepository.findAllById(ids).stream()
+                .collect(Collectors.toMap(User::getId, Function.identity()));
+    }
+
+    private ExpenseResponse toResponse(Expense e, List<ExpenseSubItem> subItems, Map<Long, User> users) {
+        Long payerId = e.effectivePayerId();
         return ExpenseResponse.builder()
-                .id(expense.getId())
-                .tripId(expense.getTrip().getId())
-                .paidBy(expense.getAddedBy())
-                .paidByUser(addedByDto)
-                .description(expense.getDescription())
-                .amount(expense.getAmount())
-                .currency(expense.getCurrency())
-                .category(expense.getCategory())
-                .expenseDate(expense.getExpenseDate())
-                .subItems(subItemDtos.isEmpty() ? Collections.emptyList() : subItemDtos)
-                .createdAt(expense.getCreatedAt())
-                .updatedAt(expense.getUpdatedAt())
+                .id(e.getId())
+                .tripId(e.getTrip().getId())
+                .description(e.getDescription())
+                .amount(e.getAmount())
+                .currency(e.getCurrency())
+                .originalAmount(e.getOriginalAmount())
+                .originalCurrency(e.getOriginalCurrency())
+                .fxRate(e.getFxRate())
+                .category(e.getCategory())
+                .expenseDate(e.getExpenseDate())
+                .notes(e.getNotes())
+                .addedBy(e.getAddedBy())
+                .addedByUser(ExpenseResponse.UserRef.of(e.getAddedBy() != null ? users.get(e.getAddedBy()) : null))
+                .paidBy(payerId)
+                .paidByUser(ExpenseResponse.UserRef.of(payerId != null ? users.get(payerId) : null))
+                .subItems(subItems.stream()
+                        .map(s -> ExpenseResponse.SubItemDto.builder()
+                                .id(s.getId())
+                                .description(s.getDescription())
+                                .amount(s.getAmount())
+                                .category(s.getCategory())
+                                .build())
+                        .toList())
+                .createdAt(e.getCreatedAt())
+                .updatedAt(e.getUpdatedAt())
                 .build();
+    }
+
+    // ── Activity feed ────────────────────────────────────────────────────────
+
+    /** Fields shown in the "expense_updated" diff, captured before the edit. */
+    private record Snapshot(String description, BigDecimal amount, String currency,
+                            Expense.ExpenseCategory category, LocalDate date, Long payerId) {
+        static Snapshot of(Expense e) {
+            return new Snapshot(e.getDescription(), e.getAmount(), e.getCurrency(), e.getCategory(),
+                    e.getExpenseDate(), e.effectivePayerId());
+        }
+    }
+
+    private String addedText(User actor, Expense e, Map<Long, User> users) {
+        StringBuilder text = new StringBuilder(displayName(actor))
+                .append(" added ").append(formatMoney(e.getAmount(), e.getCurrency()))
+                .append(" for ").append(quote(e.getDescription()));
+        if (!Objects.equals(e.getOriginalCurrency(), e.getCurrency())) {
+            text.append(" (paid ").append(formatMoney(e.getOriginalAmount(), e.getOriginalCurrency())).append(")");
+        }
+        if (!Objects.equals(e.effectivePayerId(), actor.getId())) {
+            text.append(", paid by ").append(displayName(users.get(e.effectivePayerId())));
+        }
+        return text.toString();
+    }
+
+    private String updatedText(User actor, Snapshot before, Expense after, Map<Long, User> users) {
+        List<String> changes = new ArrayList<>();
+        if (!Objects.equals(before.description(), after.getDescription())) {
+            changes.add("name " + quote(before.description()) + " to " + quote(after.getDescription()));
+        }
+        if (before.amount() == null || before.amount().compareTo(after.getAmount()) != 0
+                || !Objects.equals(before.currency(), after.getCurrency())) {
+            changes.add("amount " + formatMoney(before.amount(), before.currency())
+                    + " to " + formatMoney(after.getAmount(), after.getCurrency()));
+        }
+        if (before.category() != after.getCategory()) {
+            changes.add("category " + before.category() + " to " + after.getCategory());
+        }
+        if (!Objects.equals(before.date(), after.getExpenseDate())) {
+            changes.add("date " + before.date() + " to " + after.getExpenseDate());
+        }
+        if (!Objects.equals(before.payerId(), after.effectivePayerId())) {
+            changes.add("paid by " + displayName(users.get(after.effectivePayerId())));
+        }
+        String text = displayName(actor) + " edited " + quote(after.getDescription());
+        return changes.isEmpty() ? text : text + ": " + String.join(", ", changes);
+    }
+
+    private void logActivity(Long tripId, User actor, String type, String text) {
+        // The feed must never break the money path, so failures are logged and swallowed.
+        try {
+            activityService.log(tripId, actor.getId(), displayName(actor), type, text);
+        } catch (RuntimeException e) {
+            log.warn("Could not log {} for trip {}: {}", type, tripId, e.getMessage());
+        }
+    }
+
+    // ── Small helpers ────────────────────────────────────────────────────────
+
+    static String upper(String code) {
+        if (code == null || code.isBlank()) return null;
+        return code.trim().toUpperCase(Locale.ROOT);
+    }
+
+    private static String blankToNull(String s) {
+        return s == null || s.isBlank() ? null : s.trim();
+    }
+
+    private static String displayName(User user) {
+        return TripAccessService.actorName(user);
+    }
+
+    private static String quote(String s) {
+        if (s == null || s.isBlank()) return "an expense";
+        String trimmed = s.trim();
+        return "\"" + (trimmed.length() > 80 ? trimmed.substring(0, 77) + "..." : trimmed) + "\"";
+    }
+
+    static String formatMoney(BigDecimal amount, String currency) {
+        if (amount == null) return "nothing";
+        return String.format(Locale.ROOT, "%s %,.2f", currency != null ? currency : "", amount).trim();
     }
 }

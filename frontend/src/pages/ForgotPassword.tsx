@@ -1,258 +1,280 @@
-import { useState, useRef, useEffect } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+// Forgot password (§9.2), on the backend's reset flow exactly: POST /auth/forgot-password (always 200, 429 when
+// throttled) → POST /auth/verify-email with purpose forgot_password → POST /auth/reset-password with the
+// verification token. A reset ends every other session, so it finishes on Log in.
+import { useRef, useState, type FormEvent, type ReactNode } from 'react';
+import { Link, Navigate, useLocation } from 'react-router-dom';
+import { useAuth } from '@/context/AuthContext';
 import { authService } from '@/services/authService';
+import { getErrorMessage, getErrorStatus } from '@/lib/axios';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
-import { useToast } from '@/hooks/use-toast';
-import { Compass, Loader2, Mail, Lock, ArrowLeft, Eye, EyeOff, CheckCircle } from 'lucide-react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { AuthShell } from '@/components/frontdoor/AuthShell';
+import { Field, FormAlert } from '@/components/frontdoor/fields';
+import { describedBy } from '@/components/frontdoor/fieldIds';
+import { ProgressStrip } from '@/components/frontdoor/ProgressStrip';
+import { CodeStep, NewPasswordFields, StepHeading } from '@/components/frontdoor/steps';
+import { checkNewPassword, useStepFocus } from '@/components/frontdoor/stepHelpers';
+import { isEmail, maskEmail, retryAfterSeconds } from '@/components/frontdoor/authHelpers';
+import { useCountdown } from '@/components/frontdoor/useCountdown';
 
 type Step = 'email' | 'otp' | 'password' | 'done';
+const STEPS = ['Email', 'Verify', 'Password'] as const;
+const STEP_INDEX: Record<Step, number> = { email: 0, otp: 1, password: 2, done: 3 };
+const RESEND_SECONDS = 60;
+const linkClass = 'text-ink underline decoration-rule-strong underline-offset-[3px] hover:decoration-ink';
+
+interface Problem {
+  text: string;
+  action?: ReactNode;
+}
 
 export default function ForgotPassword() {
+  const { isAuthenticated } = useAuth();
+  const location = useLocation();
+  const initialEmail = (location.state as { email?: string } | null)?.email ?? '';
+
   const [step, setStep] = useState<Step>('email');
-  const [email, setEmail] = useState('');
-  const [otp, setOtp] = useState(['', '', '', '', '', '']);
+  const [email, setEmail] = useState(initialEmail);
+  const [code, setCode] = useState('');
   const [verificationToken, setVerificationToken] = useState('');
-  const [newPassword, setNewPassword] = useState('');
-  const [confirmPassword, setConfirmPassword] = useState('');
-  const [showPassword, setShowPassword] = useState(false);
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const [error, setError] = useState('');
-  const [resendCooldown, setResendCooldown] = useState(0);
+  const [password, setPassword] = useState('');
+  const [confirm, setConfirm] = useState('');
+  const [errors, setErrors] = useState<Record<string, string | undefined>>({});
+  const [problem, setProblem] = useState<Problem | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [resending, setResending] = useState(false);
+  const busyRef = useRef(false);
+  const resend = useCountdown();
+  const stepRef = useStepFocus(step);
+  const emailRef = useRef<HTMLInputElement>(null);
+  const passwordRef = useRef<HTMLInputElement>(null);
+  const confirmRef = useRef<HTMLInputElement>(null);
 
-  const otpRefs = useRef<(HTMLInputElement | null)[]>([]);
-  const { toast } = useToast();
-  const navigate = useNavigate();
+  // Signed-in people change their password in Me; this page is for getting back in.
+  if (isAuthenticated && step !== 'done') return <Navigate to="/home" replace />;
 
-  useEffect(() => {
-    if (resendCooldown > 0) {
-      const t = setTimeout(() => setResendCooldown((c) => c - 1), 1000);
-      return () => clearTimeout(t);
-    }
-  }, [resendCooldown]);
+  const go = (next: Step) => {
+    setErrors({});
+    setProblem(null);
+    setStep(next);
+  };
 
-  // ── Step 1: send OTP ──────────────────────────────────────────────────────
-
-  const handleEmailSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setError('');
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { setError('Please enter a valid email'); return; }
-    setIsSubmitting(true);
+  const run = async (fn: () => Promise<void>) => {
+    if (busyRef.current) return;
+    busyRef.current = true;
+    setBusy(true);
     try {
-      await authService.forgotPassword(email);
-      setStep('otp');
-      setResendCooldown(60);
-      toast({ title: 'Code sent!', description: `Check ${email} for your reset code.` });
-    } catch (err: any) {
-      setError(err.response?.data?.message || 'No account found for this email.');
+      await fn();
     } finally {
-      setIsSubmitting(false);
+      busyRef.current = false;
+      setBusy(false);
     }
   };
 
-  // ── Step 2: verify OTP ────────────────────────────────────────────────────
-
-  const handleOtpChange = (index: number, value: string) => {
-    if (!/^\d*$/.test(value)) return;
-    const next = [...otp];
-    next[index] = value.slice(-1);
-    setOtp(next);
-    if (value && index < 5) otpRefs.current[index + 1]?.focus();
+  const restart = () => {
+    setCode('');
+    setVerificationToken('');
+    setNotice(null);
+    go('email');
   };
 
-  const handleOtpKeyDown = (index: number, e: React.KeyboardEvent) => {
-    if (e.key === 'Backspace' && !otp[index] && index > 0) otpRefs.current[index - 1]?.focus();
-  };
-
-  const handleOtpPaste = (e: React.ClipboardEvent) => {
-    const pasted = e.clipboardData.getData('text').replace(/\D/g, '').slice(0, 6);
-    if (pasted.length === 6) { setOtp(pasted.split('')); otpRefs.current[5]?.focus(); }
-  };
-
-  const handleOtpSubmit = async (e: React.FormEvent) => {
+  const onEmailSubmit = (e: FormEvent) => {
     e.preventDefault();
-    setError('');
-    const code = otp.join('');
-    if (code.length !== 6) { setError('Enter the 6-digit code'); return; }
-    setIsSubmitting(true);
+    setProblem(null);
+    const trimmed = email.trim();
+    const err = !trimmed ? 'Enter your email.' : !isEmail(trimmed) ? "That doesn't look like an email address." : undefined;
+    setErrors({ email: err });
+    if (err) return emailRef.current?.focus();
+    void run(async () => {
+      try {
+        await authService.forgotPassword(trimmed);
+        setNotice(null);
+        setCode('');
+        resend.start(RESEND_SECONDS);
+        go('otp');
+      } catch (error) {
+        if (getErrorStatus(error) === 429) {
+          setCode('');
+          resend.start(retryAfterSeconds(error));
+          go('otp');
+          setNotice(getErrorMessage(error));
+        } else {
+          setProblem({ text: getErrorMessage(error, "We couldn't send the code. Try again in a minute.") });
+        }
+      }
+    });
+  };
+
+  const verify = (value: string) => {
+    if (value.length !== 6) {
+      setErrors({ code: 'Enter all 6 digits.' });
+      return;
+    }
+    void run(async () => {
+      try {
+        const res = await authService.verifyEmail(email.trim(), value, 'forgot_password');
+        setVerificationToken(res.verificationToken);
+        setNotice(null);
+        go('password');
+      } catch (error) {
+        setErrors({ code: getErrorMessage(error, "That code didn't work. Check the email and try again.") });
+        setCode('');
+      }
+    });
+  };
+
+  const onResend = async () => {
+    if (resend.seconds > 0 || resending) return;
+    setResending(true);
+    setErrors({});
     try {
-      const res = await authService.verifyEmail(email, code, 'forgot_password');
-      setVerificationToken(res.verificationToken);
-      setStep('password');
-    } catch (err: any) {
-      setError(err.response?.data?.message || 'Incorrect or expired code. Try again.');
+      await authService.forgotPassword(email.trim());
+      setCode('');
+      resend.start(RESEND_SECONDS);
+      setNotice(`New code sent to ${maskEmail(email)}. The old one no longer works.`);
+    } catch (error) {
+      if (getErrorStatus(error) === 429) resend.start(retryAfterSeconds(error));
+      setNotice(getErrorMessage(error, "We couldn't send a new code. Try again in a minute."));
     } finally {
-      setIsSubmitting(false);
+      setResending(false);
     }
   };
 
-  const handleResend = async () => {
-    if (resendCooldown > 0) return;
-    try {
-      await authService.forgotPassword(email);
-      setOtp(['', '', '', '', '', '']);
-      setResendCooldown(60);
-      toast({ title: 'Code resent!', description: `New code sent to ${email}.` });
-    } catch {
-      toast({ variant: 'destructive', title: 'Failed to resend', description: 'Please try again.' });
-    }
-  };
-
-  // ── Step 3: new password ──────────────────────────────────────────────────
-
-  const handlePasswordSubmit = async (e: React.FormEvent) => {
+  const onPasswordSubmit = (e: FormEvent) => {
     e.preventDefault();
-    setError('');
-    if (newPassword.length < 8) { setError('Password must be at least 8 characters'); return; }
-    if (newPassword !== confirmPassword) { setError('Passwords do not match'); return; }
-    setIsSubmitting(true);
-    try {
-      await authService.resetPassword(email, verificationToken, newPassword);
-      setStep('done');
-    } catch (err: any) {
-      setError(err.response?.data?.message || 'Failed to reset password. Please try again.');
-    } finally {
-      setIsSubmitting(false);
-    }
+    setProblem(null);
+    const found = checkNewPassword(password, confirm);
+    setErrors(found);
+    if (found.password) return passwordRef.current?.focus();
+    if (found.confirm) return confirmRef.current?.focus();
+    void run(async () => {
+      try {
+        await authService.resetPassword(email.trim(), verificationToken, password);
+        go('done');
+      } catch (error) {
+        if (getErrorStatus(error) === 401) {
+          setProblem({
+            text: 'That code check has expired. Ask for a new code; it takes a minute.',
+            action: (
+              <button type="button" onClick={restart} className={linkClass}>
+                Start again
+              </button>
+            ),
+          });
+        } else {
+          setProblem({ text: getErrorMessage(error, "Your password wasn't changed. Try again in a moment.") });
+        }
+      }
+    });
   };
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-background px-4">
-      <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4 }} className="w-full max-w-md">
-        <div className="mb-8 text-center">
-          <Link to="/" className="inline-flex items-center gap-2">
-            <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-primary text-primary-foreground">
-              <Compass className="h-7 w-7" />
-            </div>
-            <span className="font-display text-2xl font-bold text-foreground">TravelLuhh</span>
-          </Link>
-        </div>
+    <AuthShell line="Your tabung's safe. Let's get you back in." caseTag="KUL">
+      {step !== 'done' ? <ProgressStrip steps={STEPS} current={STEP_INDEX[step]} className="mb-8" /> : null}
+      <div ref={stepRef}>
+        {step === 'email' ? (
+          <>
+            <StepHeading lead="We'll email you a code to set a new password.">Lost your boarding pass?</StepHeading>
+            <form noValidate onSubmit={onEmailSubmit} className="mt-8 flex flex-col gap-5">
+              <Field id="forgot-email" label="Email you log in with" error={errors.email}>
+                <Input
+                  ref={emailRef}
+                  data-step-focus
+                  id="forgot-email"
+                  type="email"
+                  inputMode="email"
+                  autoComplete="email"
+                  autoCapitalize="none"
+                  spellCheck={false}
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  aria-invalid={errors.email ? true : undefined}
+                  aria-describedby={describedBy('forgot-email', errors.email)}
+                />
+              </Field>
+              {problem ? <FormAlert action={problem.action}>{problem.text}</FormAlert> : null}
+              <Button type="submit" size="lg" className="w-full" disabled={busy}>
+                {busy ? 'Sending code…' : 'Email me a code'}
+              </Button>
+            </form>
+            <p className="type-body-s mt-6 text-ink-2">
+              Remembered it?{' '}
+              <Link to="/login" state={{ email: email.trim() }} className={linkClass}>
+                Back to log in
+              </Link>
+            </p>
+          </>
+        ) : null}
 
-        <Card className="border-border shadow-travelluhh">
-          <AnimatePresence mode="wait">
+        {step === 'otp' ? (
+          <>
+            <StepHeading
+              leadId="otp-lead"
+              lead={
+                <>
+                  If an account uses <span className="font-mono text-[15px] text-ink">{maskEmail(email)}</span>, we've sent a 6-digit code
+                  to it. Not there? Check spam.
+                </>
+              }
+            >
+              Check your email
+            </StepHeading>
+            <CodeStep
+              code={code}
+              onCodeChange={(v) => {
+                setCode(v);
+                if (errors.code) setErrors({});
+              }}
+              onVerify={verify}
+              verifying={busy}
+              error={errors.code}
+              resendIn={resend.seconds}
+              resending={resending}
+              onResend={onResend}
+              onChangeEmail={restart}
+              notice={notice}
+              leadId="otp-lead"
+            />
+          </>
+        ) : null}
 
-            {/* ── Email ── */}
-            {step === 'email' && (
-              <motion.div key="email" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }}>
-                <CardHeader className="space-y-1 text-center">
-                  <CardTitle className="font-display text-2xl">Forgot password?</CardTitle>
-                  <CardDescription>Enter your email and we'll send a reset code</CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <form onSubmit={handleEmailSubmit} className="space-y-4">
-                    <div className="space-y-2">
-                      <Label htmlFor="email">Email</Label>
-                      <div className="relative">
-                        <Mail className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                        <Input id="email" type="email" placeholder="you@example.com" value={email} onChange={(e) => setEmail(e.target.value)} className={`pl-10 ${error ? 'border-destructive' : ''}`} autoFocus />
-                      </div>
-                      {error && <p className="text-sm text-destructive">{error}</p>}
-                    </div>
-                    <Button type="submit" className="w-full" disabled={isSubmitting}>
-                      {isSubmitting ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Sending...</> : 'Send Reset Code'}
-                    </Button>
-                  </form>
-                </CardContent>
-              </motion.div>
-            )}
+        {step === 'password' ? (
+          <>
+            <StepHeading lead="Saving it logs you out on every other device.">Pick a new password</StepHeading>
+            <form noValidate onSubmit={onPasswordSubmit} className="mt-8 flex flex-col gap-5">
+              {/* Lets password managers file the new password under the right account. */}
+              <input type="email" autoComplete="username" value={email.trim()} readOnly hidden />
+              <NewPasswordFields
+                password={password}
+                confirm={confirm}
+                onPassword={setPassword}
+                onConfirm={setConfirm}
+                errors={{ password: errors.password, confirm: errors.confirm }}
+                passwordLabel="New password"
+                passwordRef={passwordRef}
+                confirmRef={confirmRef}
+                stepFocus
+              />
+              {problem ? <FormAlert action={problem.action}>{problem.text}</FormAlert> : null}
+              <Button type="submit" size="lg" className="w-full" disabled={busy}>
+                {busy ? 'Saving…' : 'Save new password'}
+              </Button>
+            </form>
+          </>
+        ) : null}
 
-            {/* ── OTP ── */}
-            {step === 'otp' && (
-              <motion.div key="otp" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }}>
-                <CardHeader className="space-y-1 text-center">
-                  <CardTitle className="font-display text-2xl">Enter reset code</CardTitle>
-                  <CardDescription>We sent a 6-digit code to <span className="font-medium text-foreground">{email}</span></CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <form onSubmit={handleOtpSubmit} className="space-y-6">
-                    <div className="flex justify-center gap-2" onPaste={handleOtpPaste}>
-                      {otp.map((digit, i) => (
-                        <Input key={i} ref={(el) => { otpRefs.current[i] = el; }} type="text" inputMode="numeric" maxLength={1} value={digit} onChange={(e) => handleOtpChange(i, e.target.value)} onKeyDown={(e) => handleOtpKeyDown(i, e)} className="h-12 w-12 text-center text-lg font-semibold" />
-                      ))}
-                    </div>
-                    {error && <p className="text-center text-sm text-destructive">{error}</p>}
-                    <Button type="submit" className="w-full" disabled={isSubmitting}>
-                      {isSubmitting ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Verifying...</> : 'Verify Code'}
-                    </Button>
-                  </form>
-                  <p className="mt-4 text-center text-sm text-muted-foreground">
-                    Didn't receive it?{' '}
-                    <button type="button" onClick={handleResend} disabled={resendCooldown > 0} className="text-primary hover:underline disabled:text-muted-foreground">
-                      {resendCooldown > 0 ? `Resend in ${resendCooldown}s` : 'Resend code'}
-                    </button>
-                  </p>
-                </CardContent>
-                <CardFooter className="flex justify-center">
-                  <button type="button" onClick={() => setStep('email')} className="inline-flex items-center text-sm text-muted-foreground hover:text-foreground">
-                    <ArrowLeft className="mr-1 h-4 w-4" /> Change email
-                  </button>
-                </CardFooter>
-              </motion.div>
-            )}
-
-            {/* ── New password ── */}
-            {step === 'password' && (
-              <motion.div key="password" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }}>
-                <CardHeader className="space-y-1 text-center">
-                  <CardTitle className="font-display text-2xl">New password</CardTitle>
-                  <CardDescription>Choose a strong password for your account</CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <form onSubmit={handlePasswordSubmit} className="space-y-4">
-                    <div className="space-y-2">
-                      <Label htmlFor="newPassword">New Password</Label>
-                      <div className="relative">
-                        <Lock className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                        <Input id="newPassword" type={showPassword ? 'text' : 'password'} placeholder="Min 8 characters" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} className="pl-10 pr-10" autoFocus />
-                        <button type="button" onClick={() => setShowPassword(!showPassword)} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground">
-                          {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                        </button>
-                      </div>
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="confirmPassword">Confirm Password</Label>
-                      <div className="relative">
-                        <Lock className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                        <Input id="confirmPassword" type="password" placeholder="••••••••" value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} className="pl-10" />
-                      </div>
-                    </div>
-                    {error && <p className="text-sm text-destructive">{error}</p>}
-                    <Button type="submit" className="w-full" disabled={isSubmitting}>
-                      {isSubmitting ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Resetting...</> : 'Reset Password'}
-                    </Button>
-                  </form>
-                </CardContent>
-              </motion.div>
-            )}
-
-            {/* ── Done ── */}
-            {step === 'done' && (
-              <motion.div key="done" initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }}>
-                <CardHeader className="space-y-1 text-center">
-                  <CardTitle className="font-display text-2xl">Password reset!</CardTitle>
-                  <CardDescription>You can now sign in with your new password</CardDescription>
-                </CardHeader>
-                <CardContent className="flex flex-col items-center py-6">
-                  <div className="flex h-16 w-16 items-center justify-center rounded-full bg-primary/10 text-primary mb-6">
-                    <CheckCircle className="h-8 w-8" />
-                  </div>
-                  <Button className="w-full" onClick={() => navigate('/login')}>Go to Login</Button>
-                </CardContent>
-              </motion.div>
-            )}
-
-          </AnimatePresence>
-
-          <CardFooter className="flex justify-center">
-            <Link to="/login" className="inline-flex items-center text-sm text-muted-foreground hover:text-foreground">
-              <ArrowLeft className="mr-2 h-4 w-4" /> Back to login
-            </Link>
-          </CardFooter>
-        </Card>
-      </motion.div>
-    </div>
+        {step === 'done' ? (
+          <>
+            <StepHeading lead="Log in with the new one. Any other device you used will ask too.">Password changed.</StepHeading>
+            <Button asChild size="lg" className="mt-8 w-full">
+              <Link to="/login" state={{ email: email.trim() }}>
+                Log in
+              </Link>
+            </Button>
+          </>
+        ) : null}
+      </div>
+    </AuthShell>
   );
 }

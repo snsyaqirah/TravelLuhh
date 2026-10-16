@@ -1,6 +1,5 @@
 import * as React from "react";
 import { OTPInput, OTPInputContext } from "input-otp";
-import { Dot } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 
@@ -8,7 +7,7 @@ const InputOTP = React.forwardRef<React.ElementRef<typeof OTPInput>, React.Compo
   ({ className, containerClassName, ...props }, ref) => (
     <OTPInput
       ref={ref}
-      containerClassName={cn("flex items-center gap-2 has-[:disabled]:opacity-50", containerClassName)}
+      containerClassName={cn("flex items-center gap-3 has-[:disabled]:opacity-50", containerClassName)}
       className={cn("disabled:cursor-not-allowed", className)}
       {...props}
     />
@@ -16,11 +15,14 @@ const InputOTP = React.forwardRef<React.ElementRef<typeof OTPInput>, React.Compo
 );
 InputOTP.displayName = "InputOTP";
 
+// Cells sit 2px apart like a departures board.
 const InputOTPGroup = React.forwardRef<React.ElementRef<"div">, React.ComponentPropsWithoutRef<"div">>(
-  ({ className, ...props }, ref) => <div ref={ref} className={cn("flex items-center", className)} {...props} />,
+  ({ className, ...props }, ref) => <div ref={ref} className={cn("flex items-center gap-0.5", className)} {...props} />,
 );
 InputOTPGroup.displayName = "InputOTPGroup";
 
+// A SplitFlap cell (§5.4): ink card (near-black in dark), leaf Plex Mono 600 digit, a hairline across the
+// middle where the flap splits, 2px radius. The active cell gets the fund focus ring.
 const InputOTPSlot = React.forwardRef<
   React.ElementRef<"div">,
   React.ComponentPropsWithoutRef<"div"> & { index: number }
@@ -32,8 +34,9 @@ const InputOTPSlot = React.forwardRef<
     <div
       ref={ref}
       className={cn(
-        "relative flex h-10 w-10 items-center justify-center border-y border-r border-input text-sm transition-all first:rounded-l-md first:border-l last:rounded-r-md",
-        isActive && "z-10 ring-2 ring-ring ring-offset-background",
+        "relative flex h-14 w-11 items-center justify-center rounded-sm bg-ink font-mono text-[28px] font-semibold leading-none text-leaf dark:bg-shade dark:text-ink",
+        "after:pointer-events-none after:absolute after:inset-x-0 after:top-1/2 after:h-px after:bg-paper/40 dark:after:bg-ink/20",
+        isActive && "z-10 outline outline-2 outline-offset-2 outline-ring",
         className,
       )}
       {...props}
@@ -41,7 +44,7 @@ const InputOTPSlot = React.forwardRef<
       {char}
       {hasFakeCaret && (
         <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
-          <div className="animate-caret-blink h-4 w-px bg-foreground duration-1000" />
+          <div className="h-7 w-0.5 animate-caret-blink bg-leaf dark:bg-ink" />
         </div>
       )}
     </div>
@@ -50,9 +53,9 @@ const InputOTPSlot = React.forwardRef<
 InputOTPSlot.displayName = "InputOTPSlot";
 
 const InputOTPSeparator = React.forwardRef<React.ElementRef<"div">, React.ComponentPropsWithoutRef<"div">>(
-  ({ ...props }, ref) => (
-    <div ref={ref} role="separator" {...props}>
-      <Dot />
+  ({ className, ...props }, ref) => (
+    <div ref={ref} role="separator" className={cn("flex items-center", className)} {...props}>
+      <span className="h-0.5 w-3 bg-rule-strong" />
     </div>
   ),
 );

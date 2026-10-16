@@ -1,10 +1,13 @@
 package com.travelluhh.entity;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import jakarta.persistence.*;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
+import lombok.ToString;
 import org.springframework.security.core.GrantedAuthority;
 import org.springframework.security.core.userdetails.UserDetails;
 
@@ -12,8 +15,14 @@ import java.time.LocalDateTime;
 import java.util.Collection;
 import java.util.Collections;
 
+/**
+ * Controllers must return {@link com.travelluhh.dto.user.UserResponse}, never this entity.
+ * The Jackson annotations are a safety net in case one slips through.
+ */
 @Entity
 @Table(name = "users")
+@JsonIgnoreProperties(value = {"password", "username", "authorities", "accountNonExpired",
+        "accountNonLocked", "credentialsNonExpired", "enabled", "hibernateLazyInitializer", "handler"})
 @Data
 @Builder
 @NoArgsConstructor
@@ -31,6 +40,8 @@ public class User implements UserDetails {
     @Column(nullable = false, unique = true, length = 255)
     private String email;
 
+    @JsonIgnore
+    @ToString.Exclude
     @Column(name = "password_hash", length = 255)
     private String passwordHash;
 
@@ -42,6 +53,8 @@ public class User implements UserDetails {
     @Builder.Default
     private AuthProvider authProvider = AuthProvider.local;
 
+    @JsonIgnore
+    @ToString.Exclude
     @Column(name = "google_id", unique = true)
     private String googleId;
 
@@ -83,9 +96,15 @@ public class User implements UserDetails {
         return Collections.emptyList();
     }
 
+    @JsonIgnore
     @Override
     public String getPassword() {
         return passwordHash;
+    }
+
+    /** False for Google-only accounts, which have nothing to change on the change-password screen. */
+    public boolean hasPassword() {
+        return passwordHash != null && !passwordHash.isBlank();
     }
 
     @Override

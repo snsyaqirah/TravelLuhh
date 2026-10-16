@@ -7,7 +7,11 @@ services:
     restart: unless-stopped
     ports:
       - "8080:8080"
-    # No DB env vars here — application.yml already points to Neon (cloud)
-    # Add any runtime overrides below if needed, e.g.:
-    # environment:
-    #   SPRING_PROFILES_ACTIVE: prod
+    # Secrets come from backend/.env when it exists (gitignored): DB_URL, DB_USERNAME, DB_PASSWORD,
+    # MAIL_USERNAME, MAIL_PASSWORD, GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, JWT_SECRET, FRONTEND_URL,
+    # CORS_ORIGINS, SCHEMA_CHECK. They are read by the ${...} placeholders in application.example.yml.
+    # A local application.yml with literal values still wins over these, so either use placeholders there or
+    # override with Spring's own names (e.g. SPRING_DATASOURCE_PASSWORD).
+    env_file:
+      - path: ./backend/.env
+        required: false

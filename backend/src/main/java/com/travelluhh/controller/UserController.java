@@ -1,9 +1,9 @@
 package com.travelluhh.controller;
 
-import com.travelluhh.dto.auth.MessageResponse;
 import com.travelluhh.dto.user.ChangePasswordRequest;
+import com.travelluhh.dto.user.PasswordChangedResponse;
 import com.travelluhh.dto.user.UpdateProfileRequest;
-import com.travelluhh.entity.User;
+import com.travelluhh.dto.user.UserResponse;
 import com.travelluhh.service.UserService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -11,13 +11,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
 
-/**
- * User Controller
- * 
- * REST endpoints for user management
- * 
- * All endpoints require authentication (JWT token)
- */
+/** The signed-in user's own account. Every endpoint needs an access token; the JWT subject is the email. */
 @RestController
 @RequestMapping("/api/users")
 @RequiredArgsConstructor
@@ -25,50 +19,25 @@ public class UserController {
 
     private final UserService userService;
 
-    /**
-     * Get current user profile
-     * 
-     * GET /api/users/me
-     */
     @GetMapping("/me")
-    public ResponseEntity<User> getCurrentUser(Authentication authentication) {
-        String userEmail = authentication.getName();  // JWT subject contains email
-        User user = userService.getUserByEmail(userEmail);
-        return ResponseEntity.ok(user);
+    public ResponseEntity<UserResponse> getCurrentUser(Authentication authentication) {
+        return ResponseEntity.ok(userService.getCurrentUser(authentication.getName()));
     }
 
-    /**
-     * Update user profile (name, country and currency)
-     * Also marks onboarding as completed
-     *
-     * PUT /api/users/profile
-     */
     @PutMapping("/profile")
-    public ResponseEntity<User> updateProfile(
+    public ResponseEntity<UserResponse> updateProfile(
             @Valid @RequestBody UpdateProfileRequest request,
             Authentication authentication
     ) {
-        String userEmail = authentication.getName();
-        User updatedUser = userService.updateProfile(userEmail, request);
-        return ResponseEntity.ok(updatedUser);
+        return ResponseEntity.ok(userService.updateProfile(authentication.getName(), request));
     }
 
-    /**
-     * Change user password
-     *
-     * PUT /api/users/change-password
-     */
+    /** {@code {message, accessToken, refreshToken, expiresIn, user}}: other sessions end, this one gets new tokens. */
     @PutMapping("/change-password")
-    public ResponseEntity<MessageResponse> changePassword(
+    public ResponseEntity<PasswordChangedResponse> changePassword(
             @Valid @RequestBody ChangePasswordRequest request,
             Authentication authentication
     ) {
-        String userEmail = authentication.getName();
-        try {
-            userService.changePassword(userEmail, request);
-            return ResponseEntity.ok(new MessageResponse("Password changed successfully"));
-        } catch (IllegalArgumentException e) {
-            return ResponseEntity.badRequest().body(new MessageResponse(e.getMessage()));
-        }
+        return ResponseEntity.ok(userService.changePassword(authentication.getName(), request));
     }
 }

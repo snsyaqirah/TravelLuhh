@@ -1,26 +1,18 @@
-import { ReactNode } from 'react';
+import type { ReactNode } from 'react';
+import type { Role, Trip } from '@/types';
+import { roleAtLeast } from '@/components/trip/tripTabs';
 
 interface PermissionGateProps {
+  /** The trip as the API returns it; its `myRole` is the caller's role. */
+  trip: Pick<Trip, 'myRole'> | null | undefined;
+  /** Lowest role that sees the children. Writes need 'editor'; members, archive and delete need 'owner'. */
+  need: Role;
   children: ReactNode;
-  requiredRole: 'owner' | 'editor' | 'viewer';
-  currentUserRole: 'owner' | 'editor' | 'viewer';
+  /** Shown instead (default: nothing). A write control a viewer can't use is left out, not disabled. */
   fallback?: ReactNode;
 }
 
-const roleHierarchy = {
-  owner: 3,
-  editor: 2,
-  viewer: 1,
-};
-
-export function PermissionGate({
-  children,
-  requiredRole,
-  currentUserRole,
-  fallback = null,
-}: PermissionGateProps) {
-  const hasPermission =
-    roleHierarchy[currentUserRole] >= roleHierarchy[requiredRole];
-
-  return hasPermission ? <>{children}</> : <>{fallback}</>;
+/** Renders children only when the caller's role on the trip is at least `need` (server rules, API.md). */
+export function PermissionGate({ trip, need, children, fallback = null }: PermissionGateProps) {
+  return <>{roleAtLeast(trip?.myRole, need) ? children : fallback}</>;
 }

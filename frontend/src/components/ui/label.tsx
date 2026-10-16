@@ -4,7 +4,8 @@ import { cva, type VariantProps } from "class-variance-authority";
 
 import { cn } from "@/lib/utils";
 
-const labelVariants = cva("text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70");
+// Form labels stay sentence case in Schibsted (type-label); overlines are for ticket fields, not forms.
+const labelVariants = cva("type-label text-ink peer-disabled:cursor-not-allowed peer-disabled:opacity-60");
 
 const Label = React.forwardRef<
   React.ElementRef<typeof LabelPrimitive.Root>,

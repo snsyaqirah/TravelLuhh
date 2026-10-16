@@ -8,6 +8,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
+import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -21,18 +22,29 @@ public class ExpenseController {
 
     @PostMapping
     public ResponseEntity<ExpenseResponse> createExpense(
-            @Valid @RequestBody CreateExpenseRequest request,
+            @Validated(CreateExpenseRequest.OnCreate.class) @RequestBody CreateExpenseRequest request,
             Authentication authentication
     ) {
-        String userId = authentication.getName();
-        ExpenseResponse response = expenseService.createExpense(request, userId);
+        ExpenseResponse response = expenseService.createExpense(request, authentication.getName());
         return ResponseEntity.status(HttpStatus.CREATED).body(response);
     }
 
     @GetMapping("/trip/{tripId}")
-    public ResponseEntity<List<ExpenseResponse>> getExpensesByTrip(@PathVariable Long tripId) {
-        List<ExpenseResponse> expenses = expenseService.getExpensesByTrip(tripId);
-        return ResponseEntity.ok(expenses);
+    public ResponseEntity<List<ExpenseResponse>> getExpensesByTrip(
+            @PathVariable Long tripId,
+            Authentication authentication
+    ) {
+        return ResponseEntity.ok(expenseService.getExpensesByTrip(tripId, authentication.getName()));
+    }
+
+    /** Same body as POST; tripId may be omitted but must match when sent. Replaces sub-items when sent. */
+    @PutMapping("/{expenseId}")
+    public ResponseEntity<ExpenseResponse> updateExpense(
+            @PathVariable Long expenseId,
+            @Valid @RequestBody CreateExpenseRequest request,
+            Authentication authentication
+    ) {
+        return ResponseEntity.ok(expenseService.updateExpense(expenseId, request, authentication.getName()));
     }
 
     @DeleteMapping("/{expenseId}")
@@ -40,8 +52,7 @@ public class ExpenseController {
             @PathVariable Long expenseId,
             Authentication authentication
     ) {
-        String userId = authentication.getName();
-        expenseService.deleteExpense(expenseId, userId);
+        expenseService.deleteExpense(expenseId, authentication.getName());
         return ResponseEntity.noContent().build();
     }
 }

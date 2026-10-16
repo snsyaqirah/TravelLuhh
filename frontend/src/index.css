@@ -1,114 +1,174 @@
-@import url('https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=Playfair+Display:wght@600;700&display=swap');
+/*
+ * Tabung design system (DESIGN-SPEC §3, §4, §5, §10).
+ * Colours are HSL triplets so Tailwind's hsl(var(--x) / <alpha>) pattern works.
+ * They mirror src/design/tokens.ts; src/design/tokens.test.ts fails if the two drift.
+ * Fonts load from index.html (Newsreader, Schibsted Grotesk, IBM Plex Mono), not from here.
+ */
 
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
-/* travelluhh Design System
-   Primary: #004643 (Deep Teal - Trust, Travel)
-   Background: #F0EDE5 (Warm Cream - Paper-like)
-   Accent: #F9BC60 (Golden - Warmth, Adventure)
-*/
-
 @layer base {
+  /* Light: "Day ledger" */
   :root {
-    /* Core Colors - Warm Travel Theme */
-    --background: 40 25% 92%;
-    --foreground: 170 100% 14%;
+    color-scheme: light;
 
-    --card: 40 30% 96%;
-    --card-foreground: 170 100% 14%;
+    /* shadcn names, aliased onto the passbook tokens below */
+    --background: 41.3 40% 92.2%;
+    --foreground: 145.7 10.8% 12.7%;
+    --card: 42 55.6% 96.5%;
+    --card-foreground: 145.7 10.8% 12.7%;
+    --popover: 42.9 100% 98.6%;
+    --popover-foreground: 145.7 10.8% 12.7%;
+    --primary: 156.9 58.6% 21.8%;
+    --primary-foreground: 42 55.6% 96.5%;
+    --secondary: 40.9 33.3% 87.1%;
+    --secondary-foreground: 145.7 10.8% 12.7%;
+    --muted: 40.9 33.3% 87.1%;
+    --muted-foreground: 144 6% 32.5%;
+    --accent: 40.9 33.3% 87.1%; /* hover/focus surface only, never brass */
+    --accent-foreground: 145.7 10.8% 12.7%;
+    --destructive: 7.2 61.5% 42.7%;
+    --destructive-foreground: 42 55.6% 96.5%;
+    --success: 156.9 58.6% 21.8%;
+    --success-foreground: 42 55.6% 96.5%;
+    --warning: 42 66.8% 53.9%;
+    --warning-foreground: 145.7 10.8% 12.7%;
+    --border: 40 26.8% 78%;
+    --input: 40.6 15% 44.3%;
+    --ring: 156.9 58.6% 21.8%;
+    --radius: 0.375rem;
 
-    --popover: 40 30% 98%;
-    --popover-foreground: 170 100% 14%;
+    /* Passbook tokens */
+    --paper: 41.3 40% 92.2%;
+    --leaf: 42 55.6% 96.5%;
+    --raised: 42.9 100% 98.6%;
+    --sunken: 40.9 33.3% 87.1%;
+    --stripe: 41.2 47.1% 93.3%;
+    --rule: 40 26.8% 78%;
+    --rule-strong: 40 20.5% 65.5%;
+    --field: 40.6 15% 44.3%;
+    --ink: 145.7 10.8% 12.7%;
+    --ink-2: 144 6% 32.5%;
+    --ink-3: 100 4.5% 39%; /* never on sunken below 18px */
+    --fund: 156.9 58.6% 21.8%;
+    --fund-tint: 144 27.3% 89.2%;
+    --on-fund: 42 55.6% 96.5%;
+    --brass: 42 66.8% 53.9%; /* fill only on light, never text */
+    --brass-ink: 40.7 74.7% 31%;
+    --stamp: 7.2 61.5% 42.7%;
+    --stamp-tint: 15.5 58.5% 89.6%;
+    --on-stamp: 42 55.6% 96.5%;
+    --shade: 25.7 21.6% 19%;
+    --airmail: 207 58.1% 41.2%;
 
-    /* Primary - Deep Teal #004643 */
-    --primary: 178 100% 14%;
-    --primary-foreground: 40 25% 96%;
+    /* Desktop rail: the passbook cover */
+    --sidebar-background: 156.9 58.6% 21.8%;
+    --sidebar-foreground: 42 55.6% 96.5%;
+    --sidebar-primary: 42 66.8% 53.9%;
+    --sidebar-primary-foreground: 145.7 10.8% 12.7%;
+    --sidebar-accent: 156.5 51.1% 26.5%;
+    --sidebar-accent-foreground: 42 55.6% 96.5%;
+    --sidebar-border: 157.1 42.5% 31.4%;
+    --sidebar-ring: 42 66.8% 53.9%;
+    --sidebar-muted: 147 18.5% 78.8%;
 
-    /* Secondary - Soft Sage */
-    --secondary: 160 20% 85%;
-    --secondary-foreground: 170 100% 14%;
+    /* Expense categories, fixed order: stay, transport, activities, packages, food, shopping, other */
+    --cat-stay: 22 56.6% 41.6%;
+    --cat-transport: 207 58.1% 41.2%;
+    --cat-activities: 130.4 37.3% 39.4%;
+    --cat-packages: 348 46.5% 33.7%;
+    --cat-food: 39.5 75.6% 38.6%;
+    --cat-shopping: 334.6 50.6% 51.6%;
+    --cat-other: 44 7.2% 40.6%;
 
-    /* Muted - Subtle Warm Gray */
-    --muted: 40 15% 88%;
-    --muted-foreground: 170 30% 35%;
+    /* Same sun as the 3D scenes: 2px down-right, no blur */
+    --shadow-hard: 2px 2px 0 0 hsl(25.7 21.6% 19% / 0.18);
+    --grain-opacity: 0.025;
 
-    /* Accent - Golden #F9BC60 */
-    --accent: 39 92% 67%;
-    --accent-foreground: 170 100% 14%;
-
-    --destructive: 0 84% 60%;
-    --destructive-foreground: 40 25% 96%;
-
-    /* Success - Nature Green */
-    --success: 122 39% 49%;
-    --success-foreground: 40 25% 96%;
-
-    --border: 40 20% 82%;
-    --input: 40 20% 85%;
-    --ring: 178 100% 14%;
-
-    --radius: 0.75rem;
-
-    /* Sidebar */
-    --sidebar-background: 178 100% 14%;
-    --sidebar-foreground: 40 25% 92%;
-    --sidebar-primary: 39 92% 67%;
-    --sidebar-primary-foreground: 170 100% 14%;
-    --sidebar-accent: 178 80% 20%;
-    --sidebar-accent-foreground: 40 25% 92%;
-    --sidebar-border: 178 60% 22%;
-    --sidebar-ring: 39 92% 67%;
-
-    /* Custom travelluhh Variables */
-    --travelluhh-cream: 40 25% 92%;
-    --travelluhh-teal: 178 100% 14%;
-    --travelluhh-gold: 39 92% 67%;
-    --travelluhh-sage: 160 20% 75%;
-    --travelluhh-warm: 25 30% 85%;
+    /* Motion (§10) */
+    --dur-press: 80ms;
+    --dur-micro: 120ms;
+    --dur-route: 150ms;
+    --dur-ui: 200ms;
+    --dur-object: 450ms;
+    --dur-act: 900ms;
+    --ease-out: cubic-bezier(0.2, 0.8, 0.2, 1);
+    --ease-drop: cubic-bezier(0.5, 0, 0.75, 0);
+    --ease-stamp: cubic-bezier(0.3, 1.5, 0.5, 1);
   }
 
+  /* Dark: "Night market". Its own steps from the same hues, not an inversion. */
   .dark {
-    --background: 178 60% 8%;
-    --foreground: 40 25% 92%;
+    color-scheme: dark;
 
-    --card: 178 50% 12%;
-    --card-foreground: 40 25% 92%;
+    --background: 150 14.3% 8.2%;
+    --foreground: 41.7 41.8% 89.2%;
+    --card: 150 13.3% 11.8%;
+    --card-foreground: 41.7 41.8% 89.2%;
+    --popover: 150 12.5% 15.7%;
+    --popover-foreground: 41.7 41.8% 89.2%;
+    --primary: 154.7 43.8% 57.5%;
+    --primary-foreground: 150 30% 7.8%;
+    --secondary: 150 12.5% 15.7%;
+    --secondary-foreground: 41.7 41.8% 89.2%;
+    --muted: 156 15.2% 6.5%;
+    --muted-foreground: 45.7 13% 68.4%;
+    --accent: 150 10.3% 22.7%;
+    --accent-foreground: 41.7 41.8% 89.2%;
+    --destructive: 8.6 82.8% 63.5%;
+    --destructive-foreground: 156 15.2% 6.5%;
+    --success: 154.7 43.8% 57.5%;
+    --success-foreground: 150 30% 7.8%;
+    --warning: 40.3 71% 62.2%;
+    --warning-foreground: 156 15.2% 6.5%;
+    --border: 150 10.3% 22.7%;
+    --input: 138.5 5.6% 45.7%;
+    --ring: 154.7 43.8% 57.5%;
 
-    --popover: 178 50% 10%;
-    --popover-foreground: 40 25% 92%;
+    --paper: 150 14.3% 8.2%;
+    --leaf: 150 13.3% 11.8%;
+    --raised: 150 12.5% 15.7%;
+    --sunken: 156 15.2% 6.5%;
+    --stripe: 154.3 13.7% 10%;
+    --rule: 150 10.3% 22.7%;
+    --rule-strong: 145.7 8.6% 31.8%;
+    --field: 138.5 5.6% 45.7%;
+    --ink: 41.7 41.8% 89.2%;
+    --ink-2: 45.7 13% 68.4%;
+    --ink-3: 48 6.6% 55.5%;
+    --fund: 154.7 43.8% 57.5%;
+    --fund-tint: 153.9 29.1% 15.5%;
+    --on-fund: 150 30% 7.8%;
+    --brass: 40.3 71% 62.2%; /* text allowed in dark */
+    --brass-ink: 40.3 71% 62.2%;
+    --stamp: 8.6 82.8% 63.5%;
+    --stamp-tint: 10.3 43.2% 15.9%;
+    --on-stamp: 156 15.2% 6.5%;
+    --shade: 160 23.1% 2.5%;
+    --airmail: 209.7 55.7% 63.7%;
 
-    --primary: 39 92% 67%;
-    --primary-foreground: 178 100% 14%;
+    --sidebar-background: 156 15.2% 6.5%;
+    --sidebar-foreground: 41.7 41.8% 89.2%;
+    --sidebar-primary: 40.3 71% 62.2%;
+    --sidebar-primary-foreground: 156 15.2% 6.5%;
+    --sidebar-accent: 150 13.3% 11.8%;
+    --sidebar-accent-foreground: 41.7 41.8% 89.2%;
+    --sidebar-border: 150 10.3% 22.7%;
+    --sidebar-ring: 40.3 71% 62.2%;
+    --sidebar-muted: 48 6.6% 55.5%;
 
-    --secondary: 178 40% 20%;
-    --secondary-foreground: 40 25% 92%;
+    --cat-stay: 20.6 50.6% 51.6%;
+    --cat-transport: 208.5 53% 54.9%;
+    --cat-activities: 129.7 30.1% 48.2%;
+    --cat-packages: 348 36.6% 48.2%;
+    --cat-food: 40.3 62.8% 48.4%;
+    --cat-shopping: 336.2 55.2% 60.6%;
+    --cat-other: 46.7 8.8% 60%;
 
-    --muted: 178 30% 18%;
-    --muted-foreground: 40 20% 70%;
-
-    --accent: 39 92% 67%;
-    --accent-foreground: 178 100% 14%;
-
-    --destructive: 0 62% 45%;
-    --destructive-foreground: 40 25% 96%;
-
-    --success: 122 39% 49%;
-    --success-foreground: 40 25% 96%;
-
-    --border: 178 40% 20%;
-    --input: 178 40% 20%;
-    --ring: 39 92% 67%;
-
-    --sidebar-background: 178 70% 6%;
-    --sidebar-foreground: 40 25% 92%;
-    --sidebar-primary: 39 92% 67%;
-    --sidebar-primary-foreground: 178 100% 14%;
-    --sidebar-accent: 178 50% 15%;
-    --sidebar-accent-foreground: 40 25% 92%;
-    --sidebar-border: 178 40% 15%;
-    --sidebar-ring: 39 92% 67%;
+    --shadow-hard: 2px 2px 0 0 hsl(160 23.1% 2.5%);
+    --grain-opacity: 0.03;
   }
 }
 
@@ -117,7 +177,269 @@
     @apply border-border;
   }
 
+  html {
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
+    -webkit-tap-highlight-color: transparent;
+    scrollbar-color: hsl(var(--rule-strong)) hsl(var(--paper));
+  }
+
   body {
-    @apply bg-background text-foreground;
+    @apply bg-background font-sans text-foreground antialiased;
+    min-height: 100dvh;
+    font-size: 1rem;
+    line-height: 1.5rem;
+    font-optical-sizing: auto;
+    text-rendering: optimizeLegibility;
+  }
+
+  /* Paper grain: on the page only. z-index -1 keeps it under every card, sheet and bar. */
+  body::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    z-index: -1;
+    pointer-events: none;
+    opacity: var(--grain-opacity);
+    background-size: 160px 160px;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='g'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23g)'/%3E%3C/svg%3E");
+  }
+
+  /* One focus treatment for every interactive element (§5.2). */
+  :focus-visible {
+    outline: 2px solid hsl(var(--ring));
+    outline-offset: 2px;
+  }
+
+  ::selection {
+    background-color: hsl(var(--fund-tint));
+    color: hsl(var(--ink));
+  }
+
+  a {
+    text-underline-offset: 3px;
+  }
+
+  input::placeholder,
+  textarea::placeholder {
+    color: hsl(var(--ink-2));
+    opacity: 1;
+  }
+}
+
+@layer components {
+  /* Type scale (§4). Engineers use only these for type. Colour is left to the caller. */
+  .type-display-1 {
+    font-family: theme("fontFamily.display");
+    font-weight: 600;
+    letter-spacing: -0.015em;
+    font-size: 2.5rem;
+    line-height: 2.75rem;
+    text-wrap: balance;
+  }
+  .type-display-2 {
+    font-family: theme("fontFamily.display");
+    font-weight: 500;
+    letter-spacing: -0.01em;
+    font-size: 1.875rem;
+    line-height: 2.125rem;
+    text-wrap: balance;
+  }
+  .type-display-3 {
+    font-family: theme("fontFamily.display");
+    font-weight: 500;
+    font-size: 1.5rem;
+    line-height: 1.75rem;
+    text-wrap: balance;
+  }
+  /* The one emphasised (often Malay) word inside a heading. */
+  :is(.type-display-1, .type-display-2, .type-display-3) em {
+    font-style: italic;
+    font-weight: 500;
+  }
+  .type-money-hero {
+    font-family: theme("fontFamily.display");
+    font-weight: 500;
+    font-variant-numeric: lining-nums;
+    letter-spacing: -0.01em;
+    font-size: 2.75rem;
+    line-height: 2.75rem;
+  }
+  .type-money-l {
+    font-family: theme("fontFamily.mono");
+    font-weight: 500;
+    font-variant-numeric: tabular-nums;
+    font-size: 1.375rem;
+    line-height: 1.75rem;
+  }
+  .type-title {
+    font-family: theme("fontFamily.sans");
+    font-weight: 600;
+    font-size: 1.125rem;
+    line-height: 1.5rem;
+  }
+  .type-body {
+    font-family: theme("fontFamily.sans");
+    font-weight: 400;
+    font-size: 1rem;
+    line-height: 1.5rem;
+  }
+  .type-body-s {
+    font-family: theme("fontFamily.sans");
+    font-weight: 400;
+    font-size: 0.875rem;
+    line-height: 1.25rem;
+  }
+  .type-label {
+    font-family: theme("fontFamily.sans");
+    font-weight: 500;
+    font-size: 0.8125rem;
+    line-height: 1rem;
+  }
+  .type-ledger {
+    font-family: theme("fontFamily.mono");
+    font-weight: 400;
+    font-variant-numeric: tabular-nums;
+    font-size: 0.875rem;
+    line-height: 1.25rem;
+  }
+  .type-overline {
+    font-family: theme("fontFamily.mono");
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    font-size: 0.6875rem;
+    line-height: 0.875rem;
+  }
+  .type-stamp {
+    font-family: theme("fontFamily.mono");
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    font-size: 0.6875rem;
+    line-height: 1;
+  }
+
+  @media (min-width: 1024px) {
+    .type-display-1 {
+      font-size: 4rem;
+      line-height: 4.25rem;
+    }
+    .type-display-2 {
+      font-size: 2.75rem;
+      line-height: 3rem;
+    }
+    .type-display-3 {
+      font-size: 1.875rem;
+      line-height: 2.25rem;
+    }
+    .type-money-hero {
+      font-size: 4.5rem;
+      line-height: 4.5rem;
+    }
+    .type-money-l {
+      font-size: 1.625rem;
+      line-height: 2rem;
+    }
+    .type-title {
+      font-size: 1.25rem;
+      line-height: 1.75rem;
+    }
+    .type-ledger {
+      font-size: 0.9375rem;
+      line-height: 1.375rem;
+    }
+  }
+
+  /* Things you pick up or press: translate(2px,2px) and the hard shadow drops (§5.2). */
+  .pressable {
+    transition:
+      transform var(--dur-press) var(--ease-out),
+      box-shadow var(--dur-press) var(--ease-out),
+      background-color var(--dur-micro) var(--ease-out),
+      color var(--dur-micro) var(--ease-out);
+  }
+  .pressable:active:not(:disabled):not([aria-disabled="true"]) {
+    transform: translate(2px, 2px);
+    box-shadow: none;
+  }
+
+  /* 45° spent hatch over sunken (CoinRail, over-budget fills). */
+  .hatch {
+    background-color: hsl(var(--sunken));
+    background-image: repeating-linear-gradient(45deg, hsl(var(--ink-2)) 0 2px, transparent 2px 4px);
+  }
+
+  /* Ruled lines every --ledger-row (default 48px). Used by skeletons and empty ledgers. */
+  .ledger-rule {
+    background-image: linear-gradient(to bottom, transparent calc(100% - 1px), hsl(var(--rule)) calc(100% - 1px));
+    background-size: 100% var(--ledger-row, 48px);
+  }
+
+  /* Passbook margin line: 2px stamp at 35%, 44px from the left edge, desktop only. */
+  .ledger-margin {
+    position: relative;
+  }
+  .ledger-margin::before {
+    content: "";
+    display: none;
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 44px;
+    width: 2px;
+    background-color: hsl(var(--stamp) / 0.35);
+    pointer-events: none;
+  }
+  @media (min-width: 1024px) {
+    .ledger-margin::before {
+      display: block;
+    }
+  }
+
+  /* Dashed 3/3 rule for receipt separators; set the element's height to 1px. */
+  .rule-dashed {
+    background-image: linear-gradient(to right, hsl(var(--rule-strong)) 50%, transparent 50%);
+    background-size: 6px 1px;
+    background-repeat: repeat-x;
+  }
+
+  /* Static skeleton: sunken block with ruled lines. No shimmer, no pulse (§10). */
+  .ledger-skeleton {
+    background-color: hsl(var(--sunken));
+    background-image: linear-gradient(to bottom, transparent calc(100% - 1px), hsl(var(--rule) / 0.9) calc(100% - 1px));
+    background-size: 100% var(--ledger-row, 24px);
+  }
+
+  .scrollbar-none {
+    scrollbar-width: none;
+  }
+  .scrollbar-none::-webkit-scrollbar {
+    display: none;
+  }
+
+  /* Sonner: when a toast has a description, its title becomes the mono overline. */
+  [data-sonner-toast]:has([data-description]) [data-title] {
+    font-family: theme("fontFamily.mono");
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    font-size: 0.6875rem;
+    line-height: 0.875rem;
+    color: hsl(var(--ink-2));
+  }
+}
+
+/* Reduced motion: final state at once. Stamps appear without the slam, rows without the print. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 1ms !important;
+    animation-delay: 0ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 1ms !important;
+    transition-delay: 0ms !important;
+    scroll-behavior: auto !important;
   }
 }

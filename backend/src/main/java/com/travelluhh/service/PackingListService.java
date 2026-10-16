@@ -3,120 +3,177 @@ package com.travelluhh.service;
 import com.travelluhh.dto.packing.PackingItemRequest;
 import com.travelluhh.dto.packing.PackingItemResponse;
 import com.travelluhh.entity.PackingItem;
+import com.travelluhh.entity.TripMember.MemberRole;
 import com.travelluhh.entity.User;
+import com.travelluhh.exception.BadRequestException;
+import com.travelluhh.exception.NotFoundException;
 import com.travelluhh.repository.PackingItemRepository;
-import com.travelluhh.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.stream.Collectors;
+import java.util.Locale;
+import java.util.Map;
+import java.util.Set;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 @Transactional
 public class PackingListService {
 
-    private final PackingItemRepository packingItemRepository;
-    private final UserRepository userRepository;
+    static final String ITEM_NOT_FOUND = "Packing item not found";
 
-    public List<PackingItemResponse> getItems(Long tripId) {
-        return packingItemRepository.findByTripIdOrderByCreatedAtAsc(tripId)
-                .stream().map(this::toResponse).collect(Collectors.toList());
+    private record PresetItem(String label, String category) {}
+
+    /** Keyed by the preset ids the API accepts. Labels are plain text: no emoji. */
+    private static final Map<String, List<PresetItem>> PRESETS = buildPresets();
+
+    private final PackingItemRepository packingItemRepository;
+    private final TripAccessService tripAccess;
+    private final ActivityService activityService;
+
+    @Transactional(readOnly = true)
+    public List<PackingItemResponse> getItems(Long tripId, String userEmail) {
+        tripAccess.requireMember(tripId, userEmail);
+        return packingItemRepository.findByTripIdOrderByCreatedAtAscIdAsc(tripId)
+                .stream().map(PackingItemResponse::of).toList();
     }
 
     public PackingItemResponse addItem(Long tripId, PackingItemRequest request, String userEmail) {
-        User user = userRepository.findByEmail(userEmail)
-                .orElseThrow(() -> new RuntimeException("User not found"));
-
-        PackingItem item = PackingItem.builder()
+        TripAccessService.Access access = tripAccess.access(tripId, userEmail, MemberRole.editor);
+        PackingItem item = packingItemRepository.save(PackingItem.builder()
                 .tripId(tripId)
-                .addedBy(user.getId())
-                .label(request.getLabel())
-                .category(request.getCategory())
+                .addedBy(access.user().getId())
+                .label(request.getLabel().trim())
+                .category(blankToNull(request.getCategory()))
                 .isChecked(false)
-                .build();
+                .build());
 
-        return toResponse(packingItemRepository.save(item));
+        logActivity(tripId, access.user(), "packing_added", TripAccessService.actorName(access.user())
+                + " added " + quote(item.getLabel()) + " to the packing list");
+        return PackingItemResponse.of(item);
     }
 
-    public PackingItemResponse toggleItem(Long itemId) {
-        PackingItem item = packingItemRepository.findById(itemId)
-                .orElseThrow(() -> new RuntimeException("Item not found"));
-        item.setIsChecked(!item.getIsChecked());
-        return toResponse(packingItemRepository.save(item));
+    /** Flips is_checked and returns the updated item. */
+    public PackingItemResponse toggleItem(Long tripId, Long itemId, String userEmail) {
+        TripAccessService.Access access = tripAccess.access(tripId, userEmail, MemberRole.editor);
+        PackingItem item = findItem(tripId, itemId);
+        boolean checked = !Boolean.TRUE.equals(item.getIsChecked());
+        item.setIsChecked(checked);
+        item = packingItemRepository.saveAndFlush(item);
+
+        String actor = TripAccessService.actorName(access.user());
+        logActivity(tripId, access.user(), checked ? "packing_checked" : "packing_unchecked",
+                actor + (checked ? " packed " : " unpacked ") + quote(item.getLabel()));
+        return PackingItemResponse.of(item);
     }
 
-    public void deleteItem(Long itemId) {
-        packingItemRepository.deleteById(itemId);
+    public void deleteItem(Long tripId, Long itemId, String userEmail) {
+        TripAccessService.Access access = tripAccess.access(tripId, userEmail, MemberRole.editor);
+        PackingItem item = findItem(tripId, itemId);
+        packingItemRepository.delete(item);
+
+        logActivity(tripId, access.user(), "packing_deleted", TripAccessService.actorName(access.user())
+                + " removed " + quote(item.getLabel()) + " from the packing list");
     }
 
-    public List<PackingItemResponse> addPreset(Long tripId, String tripType, String userEmail) {
-        String[][] presets = getPreset(tripType);
-        User user = userRepository.findByEmail(userEmail)
-                .orElseThrow(() -> new RuntimeException("User not found"));
+    /**
+     * Adds a preset list (general | beach | hiking | business | umrah; "hajj" is accepted for umrah).
+     * Items whose label is already on the list are skipped. Returns only the items added.
+     */
+    public List<PackingItemResponse> addPreset(Long tripId, String preset, String userEmail) {
+        TripAccessService.Access access = tripAccess.access(tripId, userEmail, MemberRole.editor);
+        String key = presetKey(preset);
 
-        List<PackingItem> items = java.util.Arrays.stream(presets)
+        Set<String> existing = new HashSet<>(packingItemRepository.findLowerLabelsByTripId(tripId));
+        List<PackingItem> items = PRESETS.get(key).stream()
+                .filter(p -> existing.add(p.label().toLowerCase(Locale.ROOT)))
                 .map(p -> PackingItem.builder()
                         .tripId(tripId)
-                        .addedBy(user.getId())
-                        .label(p[0])
-                        .category(p[1])
+                        .addedBy(access.user().getId())
+                        .label(p.label())
+                        .category(p.category())
                         .isChecked(false)
                         .build())
-                .collect(Collectors.toList());
+                .toList();
+        if (items.isEmpty()) {
+            return List.of();
+        }
 
-        return packingItemRepository.saveAll(items).stream()
-                .map(this::toResponse).collect(Collectors.toList());
+        List<PackingItemResponse> added = packingItemRepository.saveAll(items).stream()
+                .map(PackingItemResponse::of).toList();
+        logActivity(tripId, access.user(), "packing_preset", TripAccessService.actorName(access.user())
+                + " added " + added.size() + (added.size() == 1 ? " item" : " items") + " from the " + key + " list");
+        return added;
     }
 
-    private String[][] getPreset(String type) {
-        return switch (type.toLowerCase()) {
-            case "beach" -> new String[][]{
-                {"Sunscreen SPF 50+", "health"}, {"Swimwear", "clothing"},
-                {"Beach towel", "gear"}, {"Flip flops", "clothing"},
-                {"Sunglasses", "clothing"}, {"Snorkeling gear", "gear"},
-                {"Waterproof bag", "gear"}, {"After-sun lotion", "health"}
-            };
-            case "hiking" -> new String[][]{
-                {"Hiking boots", "clothing"}, {"Backpack", "gear"},
-                {"Water bottle", "gear"}, {"First aid kit", "health"},
-                {"Sunscreen", "health"}, {"Trail map / GPS", "gear"},
-                {"Raincoat", "clothing"}, {"Headlamp", "gear"},
-                {"Energy snacks", "food"}, {"Trekking poles", "gear"}
-            };
-            case "business" -> new String[][]{
-                {"Business cards", "work"}, {"Laptop + charger", "electronics"},
-                {"Formal attire", "clothing"}, {"Notebook & pen", "work"},
-                {"Travel adapter", "electronics"}, {"Power bank", "electronics"},
-                {"Dress shoes", "clothing"}, {"Portfolio/folder", "work"}
-            };
-            case "umrah", "hajj" -> new String[][]{
-                {"Ihram", "clothing"}, {"Prayer mat", "religious"},
-                {"Quran", "religious"}, {"Tasbih", "religious"},
-                {"Comfortable walking shoes", "clothing"}, {"Sunscreen", "health"},
-                {"Water bottle", "gear"}, {"Umbrella", "gear"},
-                {"Medication", "health"}, {"Sandals", "clothing"}
-            };
-            default -> new String[][]{
-                {"Passport & documents", "documents"}, {"Phone charger", "electronics"},
-                {"Medications", "health"}, {"Clothes", "clothing"},
-                {"Toiletries", "personal"}, {"Travel adapter", "electronics"},
-                {"Power bank", "electronics"}, {"Snacks", "food"}
-            };
-        };
+    private PackingItem findItem(Long tripId, Long itemId) {
+        return packingItemRepository.findByIdAndTripId(itemId, tripId)
+                .orElseThrow(() -> new NotFoundException(ITEM_NOT_FOUND));
     }
 
-    private PackingItemResponse toResponse(PackingItem item) {
-        return PackingItemResponse.builder()
-                .id(item.getId())
-                .tripId(item.getTripId())
-                .label(item.getLabel())
-                .category(item.getCategory())
-                .isChecked(item.getIsChecked())
-                .createdAt(item.getCreatedAt())
-                .updatedAt(item.getUpdatedAt())
-                .build();
+    static String presetKey(String preset) {
+        String key = preset == null || preset.isBlank() ? "general" : preset.trim().toLowerCase(Locale.ROOT);
+        if ("hajj".equals(key)) {
+            key = "umrah";
+        }
+        if (!PRESETS.containsKey(key)) {
+            throw new BadRequestException("Unknown preset. Pick general, beach, hiking, business or umrah.");
+        }
+        return key;
+    }
+
+    private static Map<String, List<PresetItem>> buildPresets() {
+        Map<String, List<PresetItem>> presets = new LinkedHashMap<>();
+        presets.put("general", List.of(
+                new PresetItem("Passport & documents", "documents"), new PresetItem("Phone charger", "electronics"),
+                new PresetItem("Medications", "health"), new PresetItem("Clothes", "clothing"),
+                new PresetItem("Toiletries", "personal"), new PresetItem("Travel adapter", "electronics"),
+                new PresetItem("Power bank", "electronics"), new PresetItem("Snacks", "food")));
+        presets.put("beach", List.of(
+                new PresetItem("Sunscreen SPF 50+", "health"), new PresetItem("Swimwear", "clothing"),
+                new PresetItem("Beach towel", "gear"), new PresetItem("Flip flops", "clothing"),
+                new PresetItem("Sunglasses", "clothing"), new PresetItem("Snorkeling gear", "gear"),
+                new PresetItem("Waterproof bag", "gear"), new PresetItem("After-sun lotion", "health")));
+        presets.put("hiking", List.of(
+                new PresetItem("Hiking boots", "clothing"), new PresetItem("Backpack", "gear"),
+                new PresetItem("Water bottle", "gear"), new PresetItem("First aid kit", "health"),
+                new PresetItem("Sunscreen", "health"), new PresetItem("Trail map / GPS", "gear"),
+                new PresetItem("Raincoat", "clothing"), new PresetItem("Headlamp", "gear"),
+                new PresetItem("Energy snacks", "food"), new PresetItem("Trekking poles", "gear")));
+        presets.put("business", List.of(
+                new PresetItem("Business cards", "work"), new PresetItem("Laptop + charger", "electronics"),
+                new PresetItem("Formal attire", "clothing"), new PresetItem("Notebook & pen", "work"),
+                new PresetItem("Travel adapter", "electronics"), new PresetItem("Power bank", "electronics"),
+                new PresetItem("Dress shoes", "clothing"), new PresetItem("Portfolio/folder", "work")));
+        presets.put("umrah", List.of(
+                new PresetItem("Ihram", "clothing"), new PresetItem("Prayer mat", "religious"),
+                new PresetItem("Quran", "religious"), new PresetItem("Tasbih", "religious"),
+                new PresetItem("Comfortable walking shoes", "clothing"), new PresetItem("Sunscreen", "health"),
+                new PresetItem("Water bottle", "gear"), new PresetItem("Umbrella", "gear"),
+                new PresetItem("Medication", "health"), new PresetItem("Sandals", "clothing")));
+        return Map.copyOf(presets);
+    }
+
+    private void logActivity(Long tripId, User actor, String type, String text) {
+        try {
+            activityService.log(tripId, actor.getId(), TripAccessService.actorName(actor), type, text);
+        } catch (RuntimeException e) {
+            log.warn("Could not log {} for trip {}: {}", type, tripId, e.getMessage());
+        }
+    }
+
+    private static String blankToNull(String s) {
+        return s == null || s.isBlank() ? null : s.trim();
+    }
+
+    private static String quote(String s) {
+        String trimmed = s == null ? "" : s.trim();
+        return "\"" + (trimmed.length() > 80 ? trimmed.substring(0, 77) + "..." : trimmed) + "\"";
     }
 }

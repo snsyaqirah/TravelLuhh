@@ -1,3 +1,6 @@
+import { Download } from 'lucide-react';
+import { toast } from 'sonner';
+import type { Expense, Trip } from '@/types';
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
@@ -7,67 +10,62 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { Trip, Expense } from '@/types';
 import { exportExpensesToCSV, exportTripToCSV, printTripReport } from '@/lib/export';
-import { useToast } from '@/hooks/use-toast';
-import { Download, FileSpreadsheet, FileText, Printer } from 'lucide-react';
+import { cn } from '@/lib/utils';
 
 interface ExportMenuProps {
   trip: Trip;
   expenses: Expense[];
+  /** Icon-only trigger (phones). The accessible name stays "Export". */
+  compact?: boolean;
+  className?: string;
 }
 
-export function ExportMenu({ trip, expenses }: ExportMenuProps) {
-  const { toast } = useToast();
+/** CSV and print exports of a trip (lib/export escapes everything people typed). */
+export function ExportMenu({ trip, expenses, compact, className }: ExportMenuProps) {
+  const count = expenses.length;
+  const entries = `${count} ${count === 1 ? 'entry' : 'entries'}`;
 
-  const handleExportExpensesCSV = () => {
+  const ledgerCsv = () => {
     exportExpensesToCSV(expenses, trip.name);
-    toast({
-      title: 'Export complete',
-      description: 'Expenses have been exported to CSV.',
-    });
+    toast.success('Ledger saved as CSV', { description: `${entries} from ${trip.name}.` });
   };
 
-  const handleExportTripCSV = () => {
+  const reportCsv = () => {
     exportTripToCSV(trip, expenses);
-    toast({
-      title: 'Export complete',
-      description: 'Trip report has been exported to CSV.',
-    });
+    toast.success('Trip report saved as CSV', { description: `Budget, totals and ${entries}.` });
   };
 
-  const handlePrintReport = () => {
-    printTripReport(trip, expenses);
-    toast({
-      title: 'Print dialog opened',
-      description: 'You can print or save as PDF.',
-    });
+  const print = () => {
+    if (!printTripReport(trip, expenses)) {
+      toast('Your browser blocked the print window', {
+        description: 'The report was downloaded as an HTML file instead. Open it and print from there.',
+      });
+    }
   };
 
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button variant="outline" size="sm">
-          <Download className="mr-2 h-4 w-4" />
-          Export
+        <Button
+          variant={compact ? 'ghost' : 'secondary'}
+          size={compact ? 'icon' : 'sm'}
+          aria-label={compact ? 'Export' : undefined}
+          className={cn(!compact && 'h-11 md:h-9', className)}
+        >
+          <Download aria-hidden="true" />
+          {compact ? null : 'Export'}
         </Button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="w-48">
-        <DropdownMenuLabel>Export Options</DropdownMenuLabel>
+      <DropdownMenuContent align="end" className="w-56">
+        <DropdownMenuLabel className="type-overline text-ink-3">Export {trip.name}</DropdownMenuLabel>
         <DropdownMenuSeparator />
-        <DropdownMenuItem onClick={handleExportExpensesCSV}>
-          <FileSpreadsheet className="mr-2 h-4 w-4" />
-          Expenses (CSV)
+        <DropdownMenuItem onSelect={ledgerCsv} disabled={count === 0}>
+          Ledger (CSV)
         </DropdownMenuItem>
-        <DropdownMenuItem onClick={handleExportTripCSV}>
-          <FileSpreadsheet className="mr-2 h-4 w-4" />
-          Full Report (CSV)
-        </DropdownMenuItem>
+        <DropdownMenuItem onSelect={reportCsv}>Trip report (CSV)</DropdownMenuItem>
         <DropdownMenuSeparator />
-        <DropdownMenuItem onClick={handlePrintReport}>
-          <Printer className="mr-2 h-4 w-4" />
-          Print / Save as PDF
-        </DropdownMenuItem>
+        <DropdownMenuItem onSelect={print}>Print or save as PDF</DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
   );

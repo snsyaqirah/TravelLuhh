@@ -37,6 +37,11 @@ public class EmailVerificationCode {
     @Builder.Default
     private Boolean used = false;
 
+    /** Wrong guesses against this code; after 5 (AuthService.MAX_CODE_ATTEMPTS) it is burnt. Column added by migration 002. */
+    @Column(name = "attempts")
+    @Builder.Default
+    private Integer attempts = 0;
+
     @Column(name = "created_at", updatable = false)
     private LocalDateTime createdAt;
 
@@ -47,5 +52,9 @@ public class EmailVerificationCode {
 
     public boolean isExpired() {
         return LocalDateTime.now().isAfter(expiresAt);
+    }
+
+    public int attemptsSoFar() {
+        return attempts == null ? 0 : attempts;
     }
 }

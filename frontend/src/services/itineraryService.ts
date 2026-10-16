@@ -1,47 +1,26 @@
 import { api } from '@/lib/axios';
+import type { CreateItineraryItemRequest, ItineraryItem } from '@/types';
+import { apiPaths } from '@/services/apiPaths';
 
-export interface ItineraryItem {
-  id: string;
-  tripId: string;
-  itemDate: string;
-  startTime?: string;
-  endTime?: string;
-  title: string;
-  description?: string;
-  location?: string;
-  category?: string;
-  sortOrder: number;
-  createdAt: string;
-  updatedAt: string;
-}
-
-export interface CreateItineraryItemRequest {
-  itemDate: string;
-  title: string;
-  startTime?: string;
-  endTime?: string;
-  description?: string;
-  location?: string;
-  category?: string;
-}
+export type { CreateItineraryItemRequest, ItineraryItem } from '@/types';
 
 export const itineraryService = {
-  async getItems(tripId: string): Promise<ItineraryItem[]> {
+  async getItems(tripId: number): Promise<ItineraryItem[]> {
     const res = await api.get<ItineraryItem[]>(`/trips/${tripId}/itinerary`);
-    return res.data;
+    return res.data ?? [];
   },
 
-  async addItem(tripId: string, data: CreateItineraryItemRequest): Promise<ItineraryItem> {
+  async addItem(tripId: number, data: CreateItineraryItemRequest): Promise<ItineraryItem> {
     const res = await api.post<ItineraryItem>(`/trips/${tripId}/itinerary`, data);
     return res.data;
   },
 
-  async updateItem(tripId: string, itemId: string, data: CreateItineraryItemRequest): Promise<ItineraryItem> {
+  async updateItem(tripId: number, itemId: number, data: CreateItineraryItemRequest): Promise<ItineraryItem> {
     const res = await api.put<ItineraryItem>(`/trips/${tripId}/itinerary/${itemId}`, data);
     return res.data;
   },
 
-  async deleteItem(tripId: string, itemId: string): Promise<void> {
-    await api.delete(`/trips/${tripId}/itinerary/${itemId}`);
+  async deleteItem(tripId: number, itemId: number): Promise<void> {
+    await api.delete(apiPaths.itineraryItem(tripId, itemId));
   },
 };

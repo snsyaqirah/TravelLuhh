@@ -1,575 +1,332 @@
-import { useParams, useNavigate, Link } from 'react-router-dom';
-import { useState, useEffect } from 'react';
-import { useTrips } from '@/hooks/useTrips';
+// Trip detail /trips/:tripId/:tab (§9.6). Header, one scene stage with the figures beside it, the budget
+// notice, sticky ledger tabs synced to :tab, and exactly one URL sheet (?sheet=…) at a time.
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { Link, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { ChevronLeft } from 'lucide-react';
+import { useAuth } from '@/context/AuthContext';
+import { useTrip } from '@/hooks/useTrips';
 import { useExpenses } from '@/hooks/useExpenses';
-import { Expense, CreateExpenseInput, Trip } from '@/types';
-import { getCountryByCode, getCurrencySymbol, expenseCategories } from '@/data/countries';
-import { ExpenseListWithTotal } from '@/components/expenses/ExpenseListWithTotal';
-import { ExpenseForm } from '@/components/expenses/ExpenseForm';
-import { TripCurrencyCard } from '@/components/currency/TripCurrencyCard';
-import { BentoCharts } from '@/components/charts/BentoCharts';
-import { BudgetAlerts } from '@/components/alerts/BudgetAlerts';
-import { TripSharing } from '@/components/sharing/TripSharing';
-import { EditableDestinationNotes } from '@/components/notes/EditableDestinationNotes';
-import { ExportMenu } from '@/components/export/ExportMenu';
-import { PackingList } from '@/components/packing/PackingList';
-import { TripItinerary } from '@/components/itinerary/TripItinerary';
-import { ActivityFeed } from '@/components/activity/ActivityFeed';
-import { SettlementSummary } from '@/components/settlement/SettlementSummary';
+import { useFund } from '@/hooks/useFund';
+import { usePacking } from '@/hooks/usePacking';
+import { useItinerary } from '@/hooks/useItinerary';
+import { useNotes } from '@/hooks/useNotes';
+import { useToday } from '@/hooks/useToday';
+import { useRates } from '@/hooks/useRates';
+import { useShellChrome } from '@/components/shell/chrome';
+import { AppSkeleton } from '@/components/shell/AppSkeleton';
+import { isTripTab } from '@/components/shell/routeMeta';
+import { GhostOutline, LedgerTabs, NoticeSlip, ledgerPanelId, ledgerTabId, useSessionDismissed } from '@/components/motifs';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { TripHeader } from '@/components/trip/TripHeader';
+import { TripStage } from '@/components/trip/TripStage';
+import { TripFigures } from '@/components/trip/TripFigures';
+import { useTripSheet } from '@/components/trip/useTripSheet';
 import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '@/components/ui/alert-dialog';
-import { useToast } from '@/hooks/use-toast';
-import {
-  ArrowLeft,
-  Plus,
-  MapPin,
-  Calendar,
-  Wallet,
-  TrendingUp,
-  Loader2,
-  BarChart3,
-  FileText,
-  Coins,
-  ListChecks,
-  CalendarDays,
-  Activity,
-  Users,
-} from 'lucide-react';
-import { format } from 'date-fns';
-import { motion } from 'framer-motion';
-import { tripService } from '@/services/tripService';
+  TAB_LABELS,
+  TRIP_TABS,
+  WRITE_SHEETS,
+  canEditTrip,
+  isTripOwner,
+  searchForTab,
+  type TripTab,
+} from '@/components/trip/tripTabs';
+import { FundTab } from '@/components/trip/tabs/FundTab';
+import { LedgerTab } from '@/components/trip/tabs/LedgerTab';
+import { DaysTab } from '@/components/trip/tabs/DaysTab';
+import { PackTab } from '@/components/trip/tabs/PackTab';
+import { NotesTab } from '@/components/trip/tabs/NotesTab';
+import { LogSpendSheet } from '@/components/trip/sheets/LogSpendSheet';
+import { ExpenseDetailSheet } from '@/components/trip/sheets/ExpenseDetailSheet';
+import { LogbookSheet } from '@/components/trip/sheets/LogbookSheet';
+import { PeopleSheet } from '@/components/trip/sheets/PeopleSheet';
+import { DropInSheet } from '@/components/trip/sheets/DropInSheet';
+import { TripEditSheet } from '@/components/trips/TripEditSheet';
+import { fundNotice } from '@/lib/fundCopy';
+import { isLiveTrip } from '@/lib/phase';
+import { cn } from '@/lib/utils';
 
-export default function TripDetail() {
-  const { tripId } = useParams<{ tripId: string }>();
-  const navigate = useNavigate();
-  const { toast } = useToast();
-  const {
-    expenses,
-    isLoading,
-    createExpense,
-    deleteExpense,
-    getTotalByCategory,
-    getTotalSpent,
-  } = useExpenses(tripId);
+const ID_BASE = 'trip';
+const ISO_DAY = /^\d{4}-\d{2}-\d{2}$/;
+const OVER_TAIL = " Here's where it went →";
 
-  const [trip, setTrip] = useState<Trip | null>(null);
-  const [tripLoading, setTripLoading] = useState(true);
-  const [formOpen, setFormOpen] = useState(false);
-  const [editingExpense, setEditingExpense] = useState<Expense | undefined>();
-  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
-  const [expenseToDelete, setExpenseToDelete] = useState<string | null>(null);
-  const [dismissedAlerts, setDismissedAlerts] = useState<string[]>([]);
+/**
+ * LedgerTabs calls scrollIntoView({ block: 'nearest' }) on its active tab when it mounts or the tabs change,
+ * which scrolls the whole page down to the tab row on load (REQUEST to the motif owner: scroll the tab list
+ * sideways only). Until then, put the window back where it was when this render started.
+ */
+function useHoldWindowScroll(deps: unknown[]) {
+  const y = useRef(0);
+  y.current = typeof window === 'undefined' ? 0 : window.scrollY;
+  useLayoutEffect(() => {
+    if (Math.abs(window.scrollY - y.current) > 1) window.scrollTo({ top: y.current });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, deps);
+}
 
-  useEffect(() => {
-    const fetchTrip = async () => {
-      if (!tripId) return;
-      
-      setTripLoading(true);
-      try {
-        const data = await tripService.getTripById(tripId);
-        setTrip(data);
-      } catch (error: any) {
-        console.error('Failed to fetch trip:', error);
-        toast({
-          variant: 'destructive',
-          title: 'Failed to load trip',
-          description: error.response?.data?.message || 'Could not fetch trip details',
-        });
-      } finally {
-        setTripLoading(false);
-      }
-    };
-
-    fetchTrip();
-  }, [tripId, toast]);
-
-  if (tripLoading) {
-    return (
-      <div className="flex items-center justify-center py-16">
-        <Loader2 className="h-8 w-8 animate-spin text-primary" />
-      </div>
-    );
-  }
-
-  if (!trip) {
-    return (
-      <div className="flex flex-col items-center justify-center py-16">
-        <h2 className="text-xl font-semibold mb-2">Trip not found</h2>
-        <p className="text-muted-foreground mb-4">
-          The trip you're looking for doesn't exist.
-        </p>
-        <Link to="/trips">
-          <Button variant="outline">
-            <ArrowLeft className="mr-2 h-4 w-4" />
-            Back to Trips
-          </Button>
-        </Link>
-      </div>
-    );
-  }
-
-  const country = getCountryByCode(trip.destinationCountry);
-  const currencySymbol = getCurrencySymbol(trip.currency);
-  const totalSpent = getTotalSpent();
-  const remaining = trip.budget - totalSpent;
-  const spentPercentage = (totalSpent / trip.budget) * 100;
-  const categoryTotals = getTotalByCategory();
-
-  const handleCreateExpense = async (data: CreateExpenseInput) => {
-    try {
-      await createExpense(data);
-      toast({
-        title: 'Expense added!',
-        description: 'Your expense has been recorded.',
-      });
-    } catch (error) {
-      toast({
-        variant: 'destructive',
-        title: 'Failed to add expense',
-        description: 'Something went wrong. Please try again.',
-      });
-      throw error;
-    }
-  };
-
-  const handleUpdateExpense = async (data: CreateExpenseInput) => {
-    if (!editingExpense) return;
-    toast({
-      variant: 'destructive',
-      title: 'Edit not supported yet',
-      description: 'Please delete and re-add the expense.',
-    });
-  };
-
-  const handleEditClick = (expense: Expense) => {
-    setEditingExpense(expense);
-    setFormOpen(true);
-  };
-
-  const handleDeleteClick = (expenseId: string) => {
-    setExpenseToDelete(expenseId);
-    setDeleteDialogOpen(true);
-  };
-
-  const confirmDelete = async () => {
-    if (!expenseToDelete) return;
-    try {
-      await deleteExpense(expenseToDelete);
-      toast({
-        title: 'Expense deleted',
-        description: 'The expense has been removed.',
-      });
-    } catch (error) {
-      toast({
-        variant: 'destructive',
-        title: 'Failed to delete expense',
-        description: 'Something went wrong. Please try again.',
-      });
-    } finally {
-      setDeleteDialogOpen(false);
-      setExpenseToDelete(null);
-    }
-  };
-
-  const handleFormClose = () => {
-    setFormOpen(false);
-    setEditingExpense(undefined);
-  };
-
-  const handleDismissAlert = (alertId: string) => {
-    setDismissedAlerts((prev) => [...prev, alertId]);
-  };
-
+function TripNotFound() {
   return (
-    <div className="space-y-8">
-      {/* Header */}
-      <div className="flex flex-col gap-4">
-        <Link
-          to="/trips"
-          className="inline-flex items-center text-sm text-muted-foreground hover:text-foreground transition-colors"
-        >
-          <ArrowLeft className="mr-2 h-4 w-4" />
+    <div className="flex flex-col items-start gap-4 py-8 md:py-16">
+      <GhostOutline kind="ticket" height={96} />
+      <h1 className="type-display-2 text-ink">Trip not found</h1>
+      <p className="type-body max-w-[46ch] text-ink-2">
+        It may have been deleted, or you're not on this trip any more. Ask the owner to add you back if you need it.
+      </p>
+      <Button asChild variant="secondary">
+        <Link to="/trips">
+          <ChevronLeft aria-hidden="true" />
           Back to Trips
         </Link>
+      </Button>
+    </div>
+  );
+}
 
-        <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
-          <div>
-            <h1 className="font-display text-3xl font-bold text-foreground">
-              {trip.name}
-            </h1>
-            <div className="flex flex-wrap items-center gap-4 mt-2 text-muted-foreground">
-              <span className="flex items-center gap-1">
-                <MapPin className="h-4 w-4" />
-                {country?.name}
-              </span>
-              <span className="flex items-center gap-1">
-                <Calendar className="h-4 w-4" />
-                {format(new Date(trip.startDate), 'MMM d')} -{' '}
-                {format(new Date(trip.endDate), 'MMM d, yyyy')}
-              </span>
-            </div>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            <TripSharing
-              tripId={tripId!}
-              tripName={trip.name}
-              collaborators={(trip.members ?? []).map((m) => ({
-                id: String(m.id),
-                name: m.name ?? '',
-                email: m.email ?? '',
-                avatar: m.avatar,
-                role: m.role,
-              }))}
-            />
-            <ExportMenu trip={trip} expenses={expenses} />
-            <Button onClick={() => setFormOpen(true)}>
-              <Plus className="mr-2 h-4 w-4" />
-              Add Expense
-            </Button>
-          </div>
-        </div>
+function TripLoadError({ message, onRetry }: { message: string; onRetry: () => void }) {
+  return (
+    <div role="alert" className="flex flex-col items-start gap-4 py-8 md:py-16">
+      <GhostOutline kind="ticket" height={96} />
+      <h1 className="type-display-3 text-ink">This trip didn't load</h1>
+      <p className="type-body max-w-[46ch] text-ink-2">{message}</p>
+      <div className="flex flex-wrap gap-3">
+        <Button onClick={onRetry}>Try again</Button>
+        <Button asChild variant="secondary">
+          <Link to="/trips">Back to Trips</Link>
+        </Button>
       </div>
+    </div>
+  );
+}
 
-      {/* Budget Alerts */}
-      <BudgetAlerts
-        expenses={expenses}
-        totalBudget={trip.budget}
-        currency={trip.currency}
-        onDismiss={handleDismissAlert}
-        dismissedAlerts={dismissedAlerts}
+export default function TripDetail() {
+  const { tripId = '', tab: tabParam } = useParams<{ tripId: string; tab: string }>();
+  const tab: TripTab = isTripTab(tabParam) ? tabParam : 'fund';
+  const [params, setParams] = useSearchParams();
+  const { search } = useLocation();
+  const navigate = useNavigate();
+  const today = useToday();
+  const { user } = useAuth();
+  const { sheet, id: sheetId, open, close } = useTripSheet();
+
+  // Group trips on the road poll (§0.1 isLiveTrip); everything else loads once and refreshes on writes.
+  const [live, setLive] = useState(false);
+  const { trip, isLoading, error, notFound, refetch } = useTrip(tripId, { live });
+  const nextLive = isLiveTrip(trip, today);
+  if (nextLive !== live) setLive(nextLive);
+
+  const enabled = Boolean(trip);
+  const tid = trip?.id;
+  const expensesQ = useExpenses(tid, { live, enabled });
+  const packing = usePacking(tid);
+  const itinerary = useItinerary(tid);
+  const notes = useNotes(tid);
+  const rates = useRates(trip?.currency);
+
+  // While the expenses list loads, the trip's own spent_amount stands in.
+  const fund = useFund(trip, { spent: expensesQ.isLoading ? undefined : expensesQ.totalSpent });
+
+  const canEdit = canEditTrip(trip);
+  const owner = isTripOwner(trip);
+
+  useShellChrome({ title: trip?.name, backTo: '/trips', backLabel: 'Back to Trips' });
+
+  // A viewer who lands on a write sheet by URL (or a stale link) gets it closed instead of a dead form.
+  useEffect(() => {
+    if (trip && sheet && WRITE_SHEETS.has(sheet) && !canEdit) close();
+  }, [trip, sheet, canEdit, close]);
+
+  const dayParam = params.get('day');
+  const selectedDay = dayParam && ISO_DAY.test(dayParam) ? dayParam : null;
+
+  const onSelectDay = useCallback(
+    (iso: string) =>
+      setParams(
+        (prev) => {
+          const p = new URLSearchParams(prev);
+          p.set('day', iso);
+          return p;
+        },
+        { replace: true }
+      ),
+    [setParams]
+  );
+
+  const goTab = useCallback(
+    (next: TripTab) => navigate({ pathname: `/trips/${tripId}/${next}`, search: searchForTab(search, next) }, { replace: true }),
+    [navigate, tripId, search]
+  );
+
+  // "Here's where it went →" lands on the Fund tab's category table.
+  const scrollToCategories = useRef(false);
+  const showWhereItWent = () => {
+    if (tab !== 'fund') {
+      scrollToCategories.current = true;
+      goTab('fund');
+    } else document.getElementById('categories')?.scrollIntoView({ block: 'start' });
+  };
+  useEffect(() => {
+    if (tab !== 'fund' || !scrollToCategories.current) return;
+    const t = window.setTimeout(() => {
+      const el = document.getElementById('categories');
+      if (el) {
+        scrollToCategories.current = false;
+        el.scrollIntoView({ block: 'start' });
+      }
+    }, 60);
+    return () => window.clearTimeout(t);
+  }, [tab, expensesQ.isLoading]);
+
+  const notice = fund ? fundNotice(fund) : null;
+  const [noticeDismissed, dismissNotice] = useSessionDismissed(`${tid ?? 'trip'}:${notice?.id ?? 'none'}`);
+
+  const tabs = useMemo(
+    () =>
+      TRIP_TABS.map((key) => ({
+        key,
+        label: TAB_LABELS[key],
+        count:
+          key === 'ledger'
+            ? expensesQ.expenses.length
+            : key === 'days'
+              ? itinerary.items.length
+              : key === 'pack'
+                ? packing.total
+                : key === 'notes'
+                  ? notes.customNotes.length
+                  : undefined,
+      })),
+    [expensesQ.expenses.length, itinerary.items.length, packing.total, notes.customNotes.length]
+  );
+
+  useHoldWindowScroll([tab, tabs, Boolean(trip)]);
+
+  if (!trip) {
+    if (notFound) return <TripNotFound />;
+    if (error && !isLoading) {
+      return (
+        <TripLoadError
+          message={error}
+          onRetry={() => void refetch()}
+        />
+      );
+    }
+    return <AppSkeleton />;
+  }
+  if (!fund) return <AppSkeleton />;
+
+  const editingExpense = sheet === 'log-spend' && sheetId ? expensesQ.expenses.find((e) => e.id === sheetId) : undefined;
+  const onSheetChange = (o: boolean) => {
+    if (!o) close();
+  };
+
+  let panel;
+  switch (tab) {
+    case 'ledger':
+      panel = <LedgerTab trip={trip} fund={fund} canEdit={canEdit} />;
+      break;
+    case 'days':
+      panel = <DaysTab trip={trip} canEdit={canEdit} selectedDay={selectedDay} onSelectDay={onSelectDay} />;
+      break;
+    case 'pack':
+      panel = <PackTab trip={trip} canEdit={canEdit} />;
+      break;
+    case 'notes':
+      panel = <NotesTab trip={trip} canEdit={canEdit} />;
+      break;
+    default:
+      panel = <FundTab trip={trip} fund={fund} canEdit={canEdit} />;
+  }
+
+  return (
+    <div className="flex flex-col gap-6 lg:gap-8">
+      <TripHeader
+        trip={trip}
+        fund={fund}
+        expenses={expensesQ.expenses}
+        homeCountry={user?.country}
+        today={today}
+        canEdit={canEdit}
+        isOwner={owner}
+        onOpenSheet={(s) => open(s)}
       />
 
-      {/* Budget Overview Cards */}
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0 }}
-        >
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between pb-2">
-              <CardTitle className="text-sm font-medium text-muted-foreground">
-                Total Budget
-              </CardTitle>
-              <Wallet className="h-4 w-4 text-muted-foreground" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">
-                {currencySymbol}
-                {trip.budget.toLocaleString()}
-              </div>
-            </CardContent>
-          </Card>
-        </motion.div>
-
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.1 }}
-        >
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between pb-2">
-              <CardTitle className="text-sm font-medium text-muted-foreground">
-                Total Spent
-              </CardTitle>
-              <TrendingUp className="h-4 w-4 text-muted-foreground" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold text-primary">
-                {currencySymbol}
-                {totalSpent.toLocaleString()}
-              </div>
-              <p className="text-xs text-muted-foreground">
-                {spentPercentage.toFixed(1)}% of budget
-              </p>
-            </CardContent>
-          </Card>
-        </motion.div>
-
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.2 }}
-        >
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between pb-2">
-              <CardTitle className="text-sm font-medium text-muted-foreground">
-                Remaining
-              </CardTitle>
-              <Wallet className="h-4 w-4 text-muted-foreground" />
-            </CardHeader>
-            <CardContent>
-              <div
-                className={`text-2xl font-bold ${
-                  remaining < 0 ? 'text-destructive' : 'text-success'
-                }`}
-              >
-                {currencySymbol}
-                {remaining.toLocaleString()}
-              </div>
-            </CardContent>
-          </Card>
-        </motion.div>
-
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.3 }}
-        >
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between pb-2">
-              <CardTitle className="text-sm font-medium text-muted-foreground">
-                Expenses
-              </CardTitle>
-              <FileText className="h-4 w-4 text-muted-foreground" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">
-                {expenses.length}
-              </div>
-              <p className="text-xs text-muted-foreground">
-                {expenses.length === 1 ? 'expense' : 'expenses'} recorded
-              </p>
-            </CardContent>
-          </Card>
-        </motion.div>
-      </div>
-
-      {/* Currency Card */}
-      <TripCurrencyCard
-        userCurrency={trip.currency}
-        tripCurrency={country?.currency}
-      />
-
-      {/* Tabbed Content */}
-      <Tabs defaultValue="expenses" className="space-y-6">
-        <div className="overflow-x-auto pb-1">
-          <TabsList className="inline-flex w-max min-w-full sm:min-w-0">
-            <TabsTrigger value="expenses" className="gap-2">
-              <FileText className="h-4 w-4 hidden sm:inline" />
-              Expenses
-            </TabsTrigger>
-            <TabsTrigger value="itinerary" className="gap-2">
-              <CalendarDays className="h-4 w-4 hidden sm:inline" />
-              Itinerary
-            </TabsTrigger>
-            <TabsTrigger value="packing" className="gap-2">
-              <ListChecks className="h-4 w-4 hidden sm:inline" />
-              Packing
-            </TabsTrigger>
-            <TabsTrigger value="charts" className="gap-2">
-              <BarChart3 className="h-4 w-4 hidden sm:inline" />
-              Charts
-            </TabsTrigger>
-            <TabsTrigger value="activity" className="gap-2">
-              <Activity className="h-4 w-4 hidden sm:inline" />
-              Activity
-            </TabsTrigger>
-            {(trip.budgetType === 'shared' || trip.budgetType === 'separated') && (
-              <TabsTrigger value="settlement" className="gap-2">
-                <Users className="h-4 w-4 hidden sm:inline" />
-                Settle Up
-              </TabsTrigger>
-            )}
-            <TabsTrigger value="notes" className="gap-2">
-              <MapPin className="h-4 w-4 hidden sm:inline" />
-              Notes
-            </TabsTrigger>
-          </TabsList>
-        </div>
-
-        <TabsContent value="expenses">
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-          >
-            <Card>
-              <CardHeader className="flex flex-row items-center justify-between">
-                <CardTitle className="font-display text-lg">Expenses</CardTitle>
-                {expenses.length > 0 && (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setFormOpen(true)}
-                  >
-                    <Plus className="mr-2 h-4 w-4" />
-                    Add
-                  </Button>
-                )}
-              </CardHeader>
-              <CardContent>
-                {isLoading ? (
-                  <div className="flex items-center justify-center py-8">
-                    <Loader2 className="h-6 w-6 animate-spin text-primary" />
-                  </div>
-                ) : (
-                  <ExpenseListWithTotal
-                    expenses={expenses}
-                    currency={trip.currency}
-                    onEdit={handleEditClick}
-                    onDelete={handleDeleteClick}
-                  />
-                )}
-              </CardContent>
-            </Card>
-          </motion.div>
-        </TabsContent>
-
-        <TabsContent value="charts">
-          <div className="space-y-6">
-            <BentoCharts
-              expenses={expenses}
-              totalBudget={trip.budget}
-              currency={trip.currency}
-              startDate={trip.startDate}
-              endDate={trip.endDate}
-            />
-            <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}>
-              <Card>
-                <CardHeader>
-                  <CardTitle className="font-display text-lg flex items-center gap-2">
-                    <Coins className="h-5 w-5" />
-                    Spending by Category
-                  </CardTitle>
-                </CardHeader>
-                <CardContent>
-                  {Object.keys(categoryTotals).length > 0 ? (
-                    <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                      {expenseCategories.map((cat) => {
-                        const amount = categoryTotals[cat.value as keyof typeof categoryTotals] || 0;
-                        if (amount === 0) return null;
-                        const percentage = (amount / totalSpent) * 100;
-                        return (
-                          <div key={cat.value} className="flex items-center gap-3 p-4 rounded-lg bg-muted/50">
-                            <div
-                              className="flex h-12 w-12 items-center justify-center rounded-lg text-xl"
-                              style={{ backgroundColor: `${cat.color}20` }}
-                            >
-                              {cat.icon}
-                            </div>
-                            <div className="flex-1">
-                              <div className="flex justify-between items-center">
-                                <span className="font-medium">{cat.label}</span>
-                                <span className="font-semibold">{currencySymbol}{amount.toLocaleString()}</span>
-                              </div>
-                              <div className="mt-2 h-2 rounded-full bg-muted overflow-hidden">
-                                <div
-                                  className="h-full rounded-full transition-all"
-                                  style={{ width: `${percentage}%`, backgroundColor: cat.color }}
-                                />
-                              </div>
-                              <p className="text-xs text-muted-foreground mt-1">{percentage.toFixed(1)}% of total</p>
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  ) : (
-                    <div className="text-center py-8 text-muted-foreground">No expenses recorded yet.</div>
-                  )}
-                </CardContent>
-              </Card>
-            </motion.div>
-          </div>
-        </TabsContent>
-
-        <TabsContent value="itinerary">
-          <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}>
-            <Card>
-              <CardContent className="pt-6">
-                <TripItinerary
-                  tripId={tripId!}
-                  startDate={trip.startDate}
-                  endDate={trip.endDate}
-                />
-              </CardContent>
-            </Card>
-          </motion.div>
-        </TabsContent>
-
-        <TabsContent value="packing">
-          <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}>
-            <Card>
-              <CardContent className="pt-6">
-                <PackingList tripId={tripId!} />
-              </CardContent>
-            </Card>
-          </motion.div>
-        </TabsContent>
-
-        <TabsContent value="activity">
-          <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}>
-            <Card>
-              <CardHeader>
-                <CardTitle className="font-display text-lg">Activity Feed</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <ActivityFeed tripId={tripId!} />
-              </CardContent>
-            </Card>
-          </motion.div>
-        </TabsContent>
-
-        {(trip.budgetType === 'shared' || trip.budgetType === 'separated') && (
-          <TabsContent value="settlement">
-            <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}>
-              <SettlementSummary tripId={tripId!} currency={trip.currency} />
-            </motion.div>
-          </TabsContent>
-        )}
-
-        <TabsContent value="notes">
-          <EditableDestinationNotes
-            tripId={tripId!}
-            destinationCountry={trip.destinationCountry}
-            destinationName={country?.name || trip.destinationCountry}
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-12 lg:items-start">
+        <div className="min-w-0 lg:col-span-7">
+          <TripStage
+            trip={trip}
+            tab={tab}
+            fund={fund}
+            expenses={expensesQ.expenses}
+            byCategory={expensesQ.totalsByCategory}
+            packingItems={packing.items}
+            homeCountry={user?.country}
+            today={today}
+            selectedDay={tab === 'fund' || tab === 'pack' ? null : selectedDay}
+            rates={rates.rates}
           />
-        </TabsContent>
-      </Tabs>
+        </div>
+        <TripFigures trip={trip} fund={fund} homeCurrency={user?.currency} className="min-w-0 lg:col-span-5" />
+      </div>
 
-      {/* Expense Form */}
-      <ExpenseForm
-        open={formOpen}
-        onOpenChange={handleFormClose}
-        tripId={tripId!}
-        tripStartDate={trip.startDate}
-        tripEndDate={trip.endDate}
-        expense={editingExpense}
-        onSubmit={editingExpense ? handleUpdateExpense : handleCreateExpense}
-      />
+      {notice && !noticeDismissed ? (
+        <NoticeSlip
+          level={notice.level}
+          onDismiss={dismissNotice}
+          action={
+            notice.id === 'over' ? (
+              <button
+                type="button"
+                onClick={showWhereItWent}
+                className="font-medium text-ink underline decoration-rule-strong underline-offset-[3px] hover:decoration-ink"
+              >
+                Here's where it went →
+              </button>
+            ) : undefined
+          }
+        >
+          {notice.id === 'over' ? notice.text.replace(OVER_TAIL, '') : notice.text}
+        </NoticeSlip>
+      ) : null}
 
-      {/* Delete Confirmation */}
-      <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
-        <AlertDialogContent className="bg-card">
-          <AlertDialogHeader>
-            <AlertDialogTitle>Delete Expense</AlertDialogTitle>
-            <AlertDialogDescription>
-              Are you sure you want to delete this expense? This action cannot
-              be undone.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={confirmDelete}
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-            >
-              Delete
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      <div className="flex flex-col">
+        <div
+          className={cn(
+            'sticky top-[calc(52px+env(safe-area-inset-top))] z-20 -mx-4 bg-paper px-4 md:top-0 md:-mx-6 md:px-6'
+          )}
+        >
+          <LedgerTabs tabs={tabs} value={tab} onChange={goTab} ariaLabel="Trip sections" idBase={ID_BASE} />
+        </div>
+        <div
+          role="tabpanel"
+          id={ledgerPanelId(ID_BASE, tab)}
+          aria-labelledby={ledgerTabId(ID_BASE, tab)}
+          tabIndex={-1}
+          className="pt-6 outline-none [--passbook-sticky-top:calc(96px+env(safe-area-inset-top))] md:[--passbook-sticky-top:44px] lg:pt-8"
+        >
+          {panel}
+        </div>
+      </div>
+
+      {sheet === 'log-spend' && canEdit ? (
+        <LogSpendSheet trip={trip} open onOpenChange={onSheetChange} expense={editingExpense} />
+      ) : sheet === 'expense' && sheetId ? (
+        <ExpenseDetailSheet
+          trip={trip}
+          expenseId={sheetId}
+          open
+          onOpenChange={onSheetChange}
+          // Receipt → edit form is one sheet handing over to the next: replace, so Save → Back leaves the trip
+          // instead of reopening the receipt.
+          onEdit={(e) => open('log-spend', { id: e.id, replace: true })}
+        />
+      ) : sheet === 'logbook' ? (
+        <LogbookSheet tripId={trip.id} open onOpenChange={onSheetChange} />
+      ) : sheet === 'edit' && canEdit ? (
+        <TripEditSheet trip={trip} open onOpenChange={onSheetChange} />
+      ) : sheet === 'people' ? (
+        <PeopleSheet trip={trip} open onOpenChange={onSheetChange} />
+      ) : sheet === 'drop-in' && canEdit ? (
+        <DropInSheet trip={trip} open onOpenChange={onSheetChange} />
+      ) : null}
     </div>
   );
 }
