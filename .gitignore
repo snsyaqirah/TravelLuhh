@@ -42,3 +42,6 @@ backend/target/
 
 # Backend secrets - never commit real credentials
 backend/src/main/resources/application.yml
+
+# Frontend env template is safe to share
+!frontend/.env.example
