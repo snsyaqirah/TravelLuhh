@@ -210,6 +210,25 @@ export function countryStamps(trips: ReadonlyArray<PassportTrip>): CountryStamp[
   return [...by.values()];
 }
 
+/** 1 when `trip` was the first trip home to its country, 2 for the second… (by start date across `home`). */
+export function visitNumber(trip: PassportTrip, home: ReadonlyArray<PassportTrip>): number {
+  const code = norm(trip.destinationCountry);
+  const earlier = home.filter(
+    (t) =>
+      t.id !== trip.id &&
+      norm(t.destinationCountry) === code &&
+      (t.startDate < trip.startDate || (t.startDate === trip.startDate && t.id < trip.id)),
+  );
+  return earlier.length + 1;
+}
+
+/** The next trip to come home (on the road first, then the soonest upcoming), for the empty passport. */
+export function nextHomecoming<T extends PassportTrip>(trips: ReadonlyArray<T>, today: Date): T | null {
+  const live = trips.filter((t) => !t.isArchived && getPhase(t, today) !== 'home');
+  live.sort((a, b) => a.endDate.localeCompare(b.endDate) || a.id - b.id);
+  return live[0] ?? null;
+}
+
 const MONTHS = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'];
 
 /** 'AUG 2026' */

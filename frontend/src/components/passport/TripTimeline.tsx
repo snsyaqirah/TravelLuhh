@@ -34,6 +34,15 @@ const PERFORATION: CSSProperties = {
   backgroundSize: '1.5px 8px',
 };
 
+/** '14–17 AUG': the stub and the year heading already say which year. Cross-year ranges keep both years. */
+function rangeWithoutYear(trip: Pick<PassportTrip, 'startDate' | 'endDate'>): string {
+  const range = formatRange(trip.startDate, trip.endDate);
+  const a = parseLocalDate(trip.startDate);
+  const b = parseLocalDate(trip.endDate);
+  if (!isValidDate(a) || !isValidDate(b) || a.getFullYear() !== b.getFullYear()) return range;
+  return range.replace(new RegExp(`\\s${b.getFullYear()}$`), '');
+}
+
 const MONTHS = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'];
 
 function Outcome({ trip, today }: { trip: PassportTrip; today: Date }) {
@@ -74,7 +83,7 @@ function Stub({ trip, homeCountry, today }: { trip: TripTimelineProps['trips'][n
         <div className="flex min-w-0 flex-1 flex-col justify-center gap-1 py-3 pl-4 pr-2">
           <h3 className="truncate font-display text-[19px] font-medium leading-6 text-ink">{trip.name}</h3>
           <p className="type-overline truncate text-ink-2">
-            {routeLabel(trip.destinationCountry, homeCountry)} · {formatRange(trip.startDate, trip.endDate)} · {durationLabel(days)}
+            {routeLabel(trip.destinationCountry, homeCountry)} · {rangeWithoutYear(trip)} · {durationLabel(days)}
           </p>
           <p className="type-ledger text-[13px] leading-5">
             <Outcome trip={trip} today={today} />

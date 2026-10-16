@@ -38,7 +38,7 @@ import { NotesTab } from '@/components/trip/tabs/NotesTab';
 import { LogSpendSheet } from '@/components/trip/sheets/LogSpendSheet';
 import { ExpenseDetailSheet } from '@/components/trip/sheets/ExpenseDetailSheet';
 import { LogbookSheet } from '@/components/trip/sheets/LogbookSheet';
-// TEMP-STUB import { PeopleSheet } from '@/components/trip/sheets/PeopleSheet';
+import { PeopleSheet } from '@/components/trip/sheets/PeopleSheet';
 import { DropInSheet } from '@/components/trip/sheets/DropInSheet';
 import { TripEditSheet } from '@/components/trips/TripEditSheet';
 import { fundNotice } from '@/lib/fundCopy';
@@ -329,9 +329,4 @@ export default function TripDetail() {
       ) : null}
     </div>
   );
-}
-
-// ── TEMP-STUBS: teammates' components not landed yet; replaced by the real imports before hand-off ──
-function PeopleSheet(_: { trip: Trip; open: boolean; onOpenChange: (o: boolean) => void }) {
-  return null;
 }
