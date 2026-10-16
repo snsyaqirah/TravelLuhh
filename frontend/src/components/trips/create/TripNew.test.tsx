@@ -66,7 +66,7 @@ describe('Create flow', () => {
     expect(screen.getByRole('heading', { level: 1, name: 'Where to?' })).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Next' }));
     expect(await screen.findByText("Pick where you're going.")).toBeInTheDocument();
-    const search = screen.getByLabelText('Search 44 places');
+    const search = screen.getByLabelText(/^Search \d+ places$/);
     expect(search).toHaveAttribute('aria-invalid', 'true');
     await waitFor(() => expect(search).toHaveFocus());
     // still on step 1
@@ -75,7 +75,7 @@ describe('Create flow', () => {
 
   it('Enter in the search box takes the top match, then the form moves on and saves the draft', async () => {
     renderPage();
-    const search = screen.getByLabelText('Search 44 places');
+    const search = screen.getByLabelText(/^Search \d+ places$/);
     fireEvent.change(search, { target: { value: 'jepun' } });
     fireEvent.keyDown(search, { key: 'Enter' });
     expect(await screen.findByText('Japan', { selector: 'p' })).toBeInTheDocument();

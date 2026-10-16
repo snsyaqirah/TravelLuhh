@@ -103,7 +103,7 @@ export function CountrySearch({
         </div>
       ) : null}
 
-      <FieldLabel htmlFor={`${id}-q`}>{selected ? 'Somewhere else?' : 'Search 44 places'}</FieldLabel>
+      <FieldLabel htmlFor={`${id}-q`}>{selected ? 'Somewhere else?' : `Search ${countries.length} places`}</FieldLabel>
       <div className="relative mt-1.5">
         <Search aria-hidden="true" className="pointer-events-none absolute left-3 top-1/2 h-5 w-5 -translate-y-1/2 text-ink-3" strokeWidth={1.75} />
         <Input
