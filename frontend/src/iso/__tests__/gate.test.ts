@@ -4,6 +4,8 @@ import {
   evaluateGate,
   get3DGate,
   get3DPreference,
+  isChunkLoadError,
+  note3DFailure,
   noteContextLost,
   resetGateForTests,
   set3DPreference,
@@ -87,10 +89,11 @@ describe('live gate with a mocked navigator', () => {
     expect(getContext).toHaveBeenCalledWith('webgl2', { failIfMajorPerformanceCaveat: true });
   });
 
-  it('falls back to webgl1 when webgl2 is missing', () => {
+  it('a WebGL1-only device fails the gate: three 0.170 can only create WebGL2 contexts', () => {
     getContext.mockImplementation(((kind: string) =>
       kind === 'webgl' ? ({ getExtension: () => null } as unknown as RenderingContext) : null) as never);
-    expect(get3DGate().ok).toBe(true);
+    expect(get3DGate()).toEqual({ ok: false, reason: 'no-webgl' });
+    expect(getContext).not.toHaveBeenCalledWith('webgl', expect.anything());
   });
 
   it('a failed probe sticks for the session', () => {
@@ -137,6 +140,17 @@ describe('live gate with a mocked navigator', () => {
     expect(get3DPreference()).toBe('off');
     spy.mockRestore();
     spy2.mockRestore();
+  });
+
+  it('a 3D render failure sticks for the session; a chunk-load error is told apart', () => {
+    expect(get3DGate().ok).toBe(true);
+    note3DFailure();
+    expect(get3DGate()).toEqual({ ok: false, reason: 'render-error' });
+    expect(isChunkLoadError(new TypeError('Failed to fetch dynamically imported module: /assets/Shelf-x.js'))).toBe(true);
+    expect(isChunkLoadError(new Error('Importing a module script failed.'))).toBe(true);
+    expect(isChunkLoadError(Object.assign(new Error('x'), { name: 'ChunkLoadError' }))).toBe(true);
+    expect(isChunkLoadError(new Error('Error creating WebGL context.'))).toBe(false);
+    expect(isChunkLoadError('nope')).toBe(false);
   });
 
   it('allows one context-loss retry, then SVG for the session', () => {

@@ -247,7 +247,7 @@ describe('mapKampung', () => {
 
 
 describe('panning start', () => {
-  it('starts at the newest end: later trips and years project further right on screen', () => {
+  it('one year starts at the newest end, All starts at the first trip; later trips project further right', () => {
     const trips = [
       trip({ start: '2024-02-09', end: '2024-02-11' }),
       trip({ start: '2025-04-02', end: '2025-04-10' }),
@@ -259,7 +259,7 @@ describe('panning start', () => {
     ];
     for (const year of [2026, 'all'] as const) {
       const spec = mapKampung(input(trips, year));
-      expect(spec.panStart).toBe('end');
+      expect(spec.panStart).toBe(year === 'all' ? 'start' : 'end');
       const byEnd = spec.houses.slice().sort((a, b) => a.tripId - b.tripId);
       const sx = (h: (typeof byEnd)[number]) => isoProject(h.at)[0];
       expect(sx(byEnd[byEnd.length - 1])).toBeGreaterThan(sx(byEnd[0]));

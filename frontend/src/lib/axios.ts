@@ -107,7 +107,9 @@ function withRefreshLock<T>(fn: () => Promise<T>): Promise<T> {
     return fn();
   };
   try {
-    return locks.request(REFRESH_LOCK, run).catch((err: unknown) => {
+    // request() resolves with the callback's settled value (the lock is held until fn's promise settles).
+    const held = locks.request(REFRESH_LOCK, run) as Promise<unknown> as Promise<T>;
+    return held.catch((err: unknown) => {
       if (ran) throw err;
       return fn(); // the lock itself failed (e.g. not allowed here): refresh without it
     });

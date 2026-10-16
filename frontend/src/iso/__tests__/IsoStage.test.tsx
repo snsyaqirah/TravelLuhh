@@ -155,14 +155,15 @@ describe('IsoStage (no WebGL in jsdom → SVG twin)', () => {
       rates: null,
       today: new Date(2026, 9, 15),
     });
+    // All years: spec.panStart is 'start', so the first trip is in view
     const { unmount } = render(<IsoStage spec={kampung} height={{ base: 220 }} />);
-    expect(screen.getByRole('button', { name: 'Show later trips' })).toBeDisabled();
-    expect(screen.getByRole('button', { name: 'Show earlier trips' })).toBeEnabled();
-    fireEvent.click(screen.getByRole('button', { name: 'Show earlier trips' }));
-    expect(screen.getByRole('button', { name: 'Show later trips' })).toBeEnabled();
-    unmount();
-    render(<IsoStage spec={kampung} height={{ base: 220 }} panStart="start" />);
     expect(screen.getByRole('button', { name: 'Show earlier trips' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Show later trips' })).toBeEnabled();
+    fireEvent.click(screen.getByRole('button', { name: 'Show later trips' }));
+    expect(screen.getByRole('button', { name: 'Show earlier trips' })).toBeEnabled();
+    unmount();
+    render(<IsoStage spec={kampung} height={{ base: 220 }} panStart="end" />);
+    expect(screen.getByRole('button', { name: 'Show later trips' })).toBeDisabled();
   });
 
   it('accepts a custom footer in place of the summary line', () => {

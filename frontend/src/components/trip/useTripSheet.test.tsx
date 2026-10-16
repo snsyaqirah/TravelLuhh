@@ -65,6 +65,16 @@ describe('useTripSheet history', () => {
     expect(at()).toBe('/trips');
   });
 
+  it('opening a sheet over an open one is a hand-off even without replace: close never reveals the old sheet', async () => {
+    renderAt(['/trips', '/trips/1/ledger']);
+    await act(async () => sheet.open('expense', { id: 42 }));
+    await act(async () => sheet.open('log-spend', { id: 42 }));
+    await act(async () => sheet.close());
+    expect(at()).toBe('/trips/1/ledger');
+    await act(async () => nav(-1));
+    expect(at()).toBe('/trips');
+  });
+
   it('a second close() for the same sheet (Save then onOpenChange) steps back only once', async () => {
     renderAt(['/trips', '/trips/1/fund']);
     await act(async () => sheet.open('drop-in'));

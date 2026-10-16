@@ -366,8 +366,9 @@ export function mapKampung(input: KampungInput, opts: KampungOptions = {}): Kamp
     labels: withRevealTargets(plan.labels, targets),
     targets,
     summary,
-    // Newest trips (and the year's jar) sit at the screen-right end: start there when the scene pans.
-    panStart: 'end',
+    // One year: the newest trips (and the year's jar) sit at the screen-right end, so start there. All years:
+    // read the village left to right from the first trip, so the first label isn't cut off at 375.
+    panStart: input.year === 'all' ? 'start' : 'end',
     plinth,
     houses,
     jars,

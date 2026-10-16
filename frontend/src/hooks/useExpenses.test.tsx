@@ -20,6 +20,8 @@ import { expenseService } from '@/services/expenseService';
 import { tripService } from '@/services/tripService';
 import { currencyService } from '@/services/currencyService';
 import { useExpenses } from './useExpenses';
+import { removeExpenseWithUndo, resetPendingDeletesForTests, undoExpenseRemoval } from '@/components/ledger/pendingDeletes';
+import { API_BASE_URL } from '@/lib/axios';
 
 const trip = { id: 9, currency: 'MYR', budget: 4000, startDate: '2026-11-12', endDate: '2026-11-20' } as Trip;
 const ramen: Expense = {
@@ -54,9 +56,18 @@ beforeEach(() => {
 
 afterEach(() => {
   off();
+  resetPendingDeletesForTests();
   vi.clearAllMocks();
   vi.useRealTimers();
+  vi.unstubAllGlobals();
+  delete (document as { visibilityState?: string }).visibilityState;
+  localStorage.clear();
 });
+
+function hidePage() {
+  Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'hidden' });
+  document.dispatchEvent(new Event('visibilitychange'));
+}
 
 describe('useExpenses', () => {
   it('loads with a string route param and totals in the trip currency', async () => {
@@ -148,6 +159,65 @@ describe('useExpenses', () => {
     expect(expenseService.deleteExpense).not.toHaveBeenCalled();
     unmount();
     expect(expenseService.deleteExpense).toHaveBeenCalledWith(2);
+  });
+
+  it('an entry removed from a ledger row or receipt stays hidden from every consumer, even when a refetch brings it back', async () => {
+    const { wrapper, qc } = setup();
+    const figures = renderHook(() => useExpenses(9), { wrapper }); // TripDetail: figures, stage, counts
+    const fundTab = renderHook(() => useExpenses('9'), { wrapper }); // FundTab / export
+    await waitFor(() => expect(figures.result.current.expenses).toHaveLength(2));
+    act(() => removeExpenseWithUndo(qc, ramen));
+    // a 25 s live poll or a focus refetch inside the 5 s undo window returns the row from the server
+    await act(async () => {
+      await figures.result.current.refetch();
+    });
+    expect(qc.getQueryData<Expense[]>(['expenses', 9])?.map((e) => e.id)).toEqual([1, 2]);
+    for (const r of [figures.result, fundTab.result]) {
+      expect(r.current.expenses.map((e) => e.id)).toEqual([2]);
+      expect(r.current.totalSpent).toBe(30);
+      expect(r.current.totalsByCategory.food).toBeUndefined();
+    }
+    act(() => undoExpenseRemoval(ramen.id));
+    expect(figures.result.current.expenses.map((e) => e.id)).toEqual([1, 2]);
+    expect(expenseService.deleteExpense).not.toHaveBeenCalled();
+  });
+
+  it('when the page is hidden, pending DELETEs go out with fetch keepalive and the bearer token', async () => {
+    localStorage.setItem('travelluhh_token', 'acc-1');
+    const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 204 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const { wrapper, qc } = setup();
+    const { result } = renderHook(() => useExpenses(9), { wrapper });
+    await waitFor(() => expect(result.current.expenses).toHaveLength(2));
+    act(() => result.current.removeWithUndo(grab)); // hook-held undo
+    act(() => removeExpenseWithUndo(qc, ramen)); // ledger / receipt undo
+    await act(async () => {
+      hidePage();
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    for (const id of [1, 2]) {
+      expect(fetchMock).toHaveBeenCalledWith(`${API_BASE_URL}/expenses/${id}`, {
+        method: 'DELETE',
+        keepalive: true,
+        headers: { Authorization: 'Bearer acc-1' },
+      });
+    }
+    expect(expenseService.deleteExpense).not.toHaveBeenCalled();
+    await waitFor(() => expect(events.filter((e) => e.type === 'coinBack')).toHaveLength(2));
+  });
+
+  it('pagehide flushes too; an expired token falls back to the normal (refreshing) DELETE', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 401 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const { wrapper } = setup();
+    const { result } = renderHook(() => useExpenses(9), { wrapper });
+    await waitFor(() => expect(result.current.expenses).toHaveLength(2));
+    act(() => result.current.removeWithUndo(ramen));
+    await act(async () => {
+      window.dispatchEvent(new Event('pagehide'));
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(expenseService.deleteExpense).toHaveBeenCalledWith(1));
   });
 
   it('puts the row back if the DELETE fails', async () => {

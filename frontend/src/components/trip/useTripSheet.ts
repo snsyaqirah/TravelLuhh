@@ -8,7 +8,7 @@ import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 // Save) goes back over that entry, so the next Back leaves the trip page instead of landing on the same page
 // again. A sheet reached by a link or a reload of a deep link has no marker: closing it replaces the entry.
 // Handing one sheet to the next (receipt → Edit) replaces the entry and keeps its marker, so Save → Back never
-// reopens the receipt.
+// reopens the receipt. Opening a sheet while another is open is a hand-off by default (one sheet at a time).
 export const TRIP_SHEETS = ['log-spend', 'logbook', 'edit', 'people', 'drop-in', 'expense'] as const;
 export type TripSheet = (typeof TRIP_SHEETS)[number];
 
@@ -25,7 +25,10 @@ function isInAppSheetEntry(state: unknown): boolean {
 
 export interface OpenSheetOptions {
   id?: number;
-  /** Swap the sheet in place (sheet-to-sheet hand-off) instead of adding a history entry. */
+  /**
+   * Swap the sheet in place (sheet-to-sheet hand-off) instead of adding a history entry. Defaults to true when a
+   * sheet is already open, false otherwise.
+   */
   replace?: boolean;
 }
 
@@ -57,7 +60,7 @@ export function useTripSheet(): TripSheetState {
 
   const open = useCallback(
     (next: TripSheet, opts?: OpenSheetOptions) => {
-      const replace = Boolean(opts?.replace);
+      const replace = opts?.replace ?? sheet !== null;
       setParams(
         (prev) => {
           const p = new URLSearchParams(prev);
@@ -70,7 +73,7 @@ export function useTripSheet(): TripSheetState {
         replace ? { replace: true, state: inApp ? IN_APP_SHEET_STATE : null } : { state: IN_APP_SHEET_STATE },
       );
     },
-    [setParams, inApp],
+    [setParams, inApp, sheet],
   );
 
   const close = useCallback(() => {
