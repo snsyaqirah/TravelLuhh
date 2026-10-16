@@ -2,19 +2,21 @@
 // passes and the slot nears the viewport, the registry (three + r3f + the scene) loads lazily, the canvas
 // mounts invisibly and crossfades in after its first frame. Nothing in this file imports three.js.
 import {
+  Component,
   useCallback,
   useEffect,
   useMemo,
   useRef,
   useState,
   type CSSProperties,
+  type ErrorInfo,
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
 } from 'react';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { ThemeName } from '@/design/tokens';
-import { dprFor, noteContextLost } from '@/iso/gate';
+import { dprFor, isChunkLoadError, note3DFailure, noteContextLost } from '@/iso/gate';
 import { loadedIsoRegistry, prefetchIsoScenes, type IsoRegistryModule } from '@/iso/prefetch';
 import {
   use3DGate,
@@ -35,6 +37,28 @@ import { svgTwins } from '@/iso/svg/registry';
 import type { IsoTier, StageFit, StageMode } from '@/iso/types';
 
 const FADE_MS = 150;
+
+/**
+ * Keeps any 3D failure inside the stage: the WebGL renderer can still throw after the gate passed (no WebGL2
+ * context, a driver error) and a lazy scene can fail to load. The stage shows its SVG twin instead of the
+ * route's error page.
+ */
+class StageErrorBoundary extends Component<{ onError: (error: unknown) => void; children: ReactNode }, { failed: boolean }> {
+  state = { failed: false };
+
+  static getDerivedStateFromError(): { failed: boolean } {
+    return { failed: true };
+  }
+
+  componentDidCatch(error: unknown, info: ErrorInfo) {
+    if (import.meta.env.DEV) console.warn('3D stage fell back to its 2D twin:', error, info.componentStack);
+    this.props.onError(error);
+  }
+
+  render() {
+    return this.state.failed ? null : this.props.children;
+  }
+}
 const PAN_ANCHOR: Record<PanStart, number> = { start: -Infinity, center: 0, end: Infinity };
 const DEFAULT_FIT: Partial<Record<SceneKind, StageFit>> = { kampung: 'height' };
 
@@ -117,6 +141,7 @@ export function IsoStage({
   const [canvasKey, setCanvasKey] = useState(0);
   const [readyKind, setReadyKind] = useState<SceneKind | null>(null);
   const [declined, setDeclined] = useState(false);
+  const [failed, setFailed] = useState(false);
   const [activeId, setActiveId] = useState<string | null>(null);
   // Pan state is tied to an anchor key: new bounds / kind / anchor start again from the anchor. ±Infinity is
   // a valid anchor because computeView clamps pan to the scene's own limit.
@@ -139,7 +164,7 @@ export function IsoStage({
     };
   }, [allow3D, near, mod]);
 
-  const canvasOn = allow3D && !!mod && !lost;
+  const canvasOn = allow3D && !!mod && !lost && !failed;
   const threeReady = canvasOn && readyKind === spec.kind;
 
   const [svgGone, setSvgGone] = useState(false);
@@ -173,6 +198,15 @@ export function IsoStage({
   }, []);
 
   const onDecline = useCallback(() => setDeclined(true), []);
+
+  const on3DError = useCallback((error: unknown) => {
+    setReadyKind(null);
+    setFailed(true);
+    if (!isChunkLoadError(error)) {
+      note3DFailure();
+      setGateBump((b) => b + 1);
+    }
+  }, []);
 
   const tier: IsoTier = tierProp ?? (declined ? 'lite' : gate.ok ? gate.tier : 'high');
 
@@ -228,26 +262,27 @@ export function IsoStage({
               className="absolute inset-0 print:hidden"
               style={{ opacity: threeReady ? 1 : 0, transition: threeReady ? fade : 'none' }}
             >
-              <mod.IsoCanvas
-                key={canvasKey}
-                bounds={spec.bounds}
-                fit={fit}
-                pan={pan}
-                theme={theme}
-                tier={tier}
-                dpr={dprFor(tier, coarse)}
-                paused={!onScreen || !pageVisible}
-                reducedMotion={reducedMotion}
-                onContextLost={onContextLost}
-                onDecline={tierProp ? undefined : onDecline}
-              >
-                <mod.SceneSwitch
-                  kind={spec.kind}
-                  Scene={mod.sceneRegistry[spec.kind].Scene}
-                  sceneProps={{ spec, theme, tier, mode, draftStep, reducedMotion }}
-                  onFirstFrame={onFirstFrame}
-                />
-              </mod.IsoCanvas>
+              <StageErrorBoundary key={canvasKey} onError={on3DError}>
+                <mod.IsoCanvas
+                  bounds={spec.bounds}
+                  fit={fit}
+                  pan={pan}
+                  theme={theme}
+                  tier={tier}
+                  dpr={dprFor(tier, coarse)}
+                  paused={!onScreen || !pageVisible}
+                  reducedMotion={reducedMotion}
+                  onContextLost={onContextLost}
+                  onDecline={tierProp ? undefined : onDecline}
+                >
+                  <mod.SceneSwitch
+                    kind={spec.kind}
+                    Scene={mod.sceneRegistry[spec.kind].Scene}
+                    sceneProps={{ spec, theme, tier, mode, draftStep, reducedMotion }}
+                    onFirstFrame={onFirstFrame}
+                  />
+                </mod.IsoCanvas>
+              </StageErrorBoundary>
             </div>
           ) : null}
           {showSvg ? (

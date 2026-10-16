@@ -3,6 +3,7 @@ package com.travelluhh.controller;
 import com.travelluhh.dto.budget.BudgetAllocationRequest;
 import com.travelluhh.dto.budget.MemberBudgetResponse;
 import com.travelluhh.service.BudgetService;
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
@@ -23,11 +24,15 @@ public class BudgetController {
         return ResponseEntity.ok(budgetService.getBudgets(tripId, authentication.getName()));
     }
 
-    /** Body: [{"userId": 2, "allocated": 1500.00}, ...]. allocated 0 removes that person's budget. */
+    /**
+     * Body: [{"userId": 2, "allocated": 1500.00}, ...]. allocated 0 removes that person's budget.
+     * {@code @Valid} on the list makes Spring's method validation check each element (@Digits on
+     * allocated); a failure is a 400 via HandlerMethodValidationException.
+     */
     @PutMapping
     public ResponseEntity<List<MemberBudgetResponse>> put(
             @PathVariable Long tripId,
-            @RequestBody List<BudgetAllocationRequest> allocations,
+            @Valid @RequestBody List<BudgetAllocationRequest> allocations,
             Authentication authentication
     ) {
         return ResponseEntity.ok(budgetService.updateBudgets(tripId, allocations, authentication.getName()));

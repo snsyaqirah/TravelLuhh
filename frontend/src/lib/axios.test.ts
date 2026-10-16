@@ -149,6 +149,69 @@ describe('expired access token', () => {
     expect(expired).toHaveLength(0);
   });
 
+  it('two tabs refreshing at once: the tab whose refresh lost adopts the winner\'s tokens instead of logging out', async () => {
+    signIn('a1', 'r1');
+    handler = (c) => {
+      if (c.url === '/auth/refresh') {
+        // The other tab's refresh with r1 landed first and stored its rotated pair; ours (r1, now used) is rejected.
+        localStorage.setItem(STORAGE_KEYS.accessToken, 'a2');
+        localStorage.setItem(STORAGE_KEYS.refreshToken, 'r2');
+        return { status: 401, data: { message: 'Your session has ended. Log in again.' } };
+      }
+      return c.headers.get('Authorization') === 'Bearer a2' ? { status: 200, data: { ok: true } } : { status: 401 };
+    };
+    const res = await api.get('/trips');
+    expect(res.data).toEqual({ ok: true });
+    expect(calls.map((x) => `${x.url} ${x.auth}`)).toEqual(['/trips Bearer a1', '/auth/refresh Bearer r1', '/trips Bearer a2']);
+    expect(localStorage.getItem(STORAGE_KEYS.accessToken)).toBe('a2');
+    expect(localStorage.getItem(STORAGE_KEYS.refreshToken)).toBe('r2');
+    expect(expired).toHaveLength(0);
+  });
+
+  describe('with the Web Locks API', () => {
+    const nav = navigator as Navigator & { locks?: unknown };
+    afterEach(() => {
+      delete (nav as { locks?: unknown }).locks;
+    });
+
+    it('waits for another tab\'s refresh and reuses its tokens without refreshing again', async () => {
+      signIn('a1', 'r1');
+      const names: string[] = [];
+      Object.defineProperty(nav, 'locks', {
+        configurable: true,
+        value: {
+          request: async (name: string, cb: () => Promise<unknown>) => {
+            names.push(name);
+            // While we waited for the lock, the other tab rotated the pair.
+            localStorage.setItem(STORAGE_KEYS.accessToken, 'a2');
+            localStorage.setItem(STORAGE_KEYS.refreshToken, 'r2');
+            return cb();
+          },
+        },
+      });
+      handler = (c) => (c.headers.get('Authorization') === 'Bearer a2' ? { status: 200, data: {} } : { status: 401 });
+      await api.get('/trips');
+      expect(names).toEqual(['travelluhh:refresh']);
+      expect(calls.map((x) => `${x.url} ${x.auth}`)).toEqual(['/trips Bearer a1', '/trips Bearer a2']);
+      expect(expired).toHaveLength(0);
+    });
+
+    it('refreshes normally when the lock itself is refused', async () => {
+      signIn('old', 'r1');
+      Object.defineProperty(nav, 'locks', {
+        configurable: true,
+        value: { request: () => Promise.reject(new DOMException('denied', 'SecurityError')) },
+      });
+      handler = (c) => {
+        if (c.url === '/auth/refresh') return { status: 200, data: { accessToken: 'new', refreshToken: 'r2' } };
+        return c.headers.get('Authorization') === 'Bearer new' ? { status: 200, data: {} } : { status: 401 };
+      };
+      await api.get('/trips');
+      expect(calls.map((x) => x.url)).toEqual(['/trips', '/auth/refresh', '/trips']);
+      expect(localStorage.getItem(STORAGE_KEYS.refreshToken)).toBe('r2');
+    });
+  });
+
   it('with no refresh token at all, expires straight away', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout'], shouldAdvanceTime: true });
     localStorage.setItem(STORAGE_KEYS.accessToken, 'old');

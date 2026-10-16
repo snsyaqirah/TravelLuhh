@@ -32,10 +32,16 @@ export function cleanMoney(amount: number, currency: string): string {
   return formatMoney(amount, currency, whole ? { decimals: 'none' } : {});
 }
 
-/** 'Saved RM 1,750 of RM 5,500 · RM 3,750 to go', or the fully funded line. Exact, so the parts add up. */
+/**
+ * 'Saved RM 1,750 of RM 5,500 · RM 3,750 to go', or the fully funded line. Exact, so the parts add up.
+ * A fund that went below zero says it's short ('Fund is RM 80 short · RM 1,080 to go'), never 'Saved −RM 80'.
+ */
 export function savedLine(fund: Pick<FundState, 'saved' | 'target' | 'toSave' | 'currency' | 'hasBudget'>): string {
   const c = fund.currency;
   const m = (n: number) => cleanMoney(n, c);
+  if (fund.saved < 0) {
+    return fund.hasBudget ? `Fund is ${m(-fund.saved)} short · ${m(fund.toSave)} to go` : `Fund is ${m(-fund.saved)} short.`;
+  }
   if (!fund.hasBudget) return `Saved ${m(fund.saved)} so far.`;
   if (fund.toSave <= 0) return `Saved ${m(fund.saved)} of ${m(fund.target)}. Cukup.`;
   return `Saved ${m(fund.saved)} of ${m(fund.target)} · ${m(fund.toSave)} to go`;

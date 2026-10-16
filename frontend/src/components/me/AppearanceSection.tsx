@@ -75,6 +75,7 @@ function scenesNote(gate: ReturnType<typeof use3DGate>): string {
     case 'no-webgl':
       return "This browser can't draw 3D, so scenes are drawn flat.";
     case 'context-lost':
+    case 'render-error':
       return 'The 3D view stopped working, so scenes are drawn flat until you reload.';
     default:
       return 'Scenes are drawn flat on this build.';

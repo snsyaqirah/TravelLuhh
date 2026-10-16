@@ -13,21 +13,40 @@ function days(n: number): string {
 }
 
 /**
+ * Why the jar is empty while nothing is over budget (on the road):
+ * saving mode, spent everything dropped in but not the whole budget →
+ * "You've spent everything you dropped in. RM 80 of the budget isn't saved yet." ·
+ * spent exactly the budget → 'Right on budget. Nothing left in the jar.'
+ */
+function emptyJarLine(f: FundState): string {
+  // Older data can hold more withdrawals than drops: say so rather than pretend the jar is just spent.
+  if (f.mode === 'saving' && f.saved < 0) return `The fund is ${sentenceMoney(-f.saved, f.currency)} short. Nothing left in the jar.`;
+  const unsaved = f.target - f.spent;
+  if (f.mode === 'saving' && f.hasBudget && unsaved > 0) {
+    return `You've spent everything you dropped in. ${sentenceMoney(unsaved, f.currency)} of the budget isn't saved yet.`;
+  }
+  if (f.mode === 'saving' && !f.hasBudget) return "You've spent everything you dropped in.";
+  return 'Right on budget. Nothing left in the jar.';
+}
+
+/**
  * The practical line under the figures:
- * on the road '≈ RM 312 a day for the next 7 days.' · upcoming 'RM 444 a day planned.' ·
- * home 'Back with RM 312 baki.' / 'Over by RM 240.' · no budget 'No budget set for this trip. Add one to fill the jar.'
+ * on the road '≈ RM 312 a day for the next 7 days.' (or why the jar is empty, see emptyJarLine) ·
+ * upcoming 'RM 444 a day planned.' · home 'Back with RM 312 baki.' / 'Over by RM 240.' ·
+ * no budget 'No budget set for this trip. Add one to fill the jar.'
  */
 export function practicalLine(f: FundState): string {
   const c = f.currency;
   if (f.phase === 'home') {
     if (f.over > 0) return `Over by ${sentenceMoney(f.over, c)}.`;
-    return f.hasBudget || f.saved > 0 ? `Back with ${sentenceMoney(f.inJar, c)} baki.` : 'Back home.';
+    return f.hasBudget || f.mode === 'saving' ? `Back with ${sentenceMoney(f.inJar, c)} baki.` : 'Back home.';
   }
-  if (!f.hasBudget && f.saved <= 0) return 'No budget set for this trip. Add one to fill the jar.';
+  if (!f.hasBudget && f.mode === 'budget') return 'No budget set for this trip. Add one to fill the jar.';
   if (f.phase === 'upcoming') {
     return f.dailyAllowance != null ? `${sentenceMoney(f.dailyAllowance, c)} a day planned.` : '';
   }
-  if (f.over > 0 || f.inJar <= 0) return `Over by ${sentenceMoney(f.over, c)}.`;
+  if (f.over > 0) return `Over by ${sentenceMoney(f.over, c)}.`;
+  if (f.inJar <= 0) return emptyJarLine(f);
   const a = sentenceMoney(f.dailyAllowance ?? 0, c, { approx: true });
   return f.daysLeft <= 1 ? `${a} left for today.` : `${a} a day for the next ${days(f.daysLeft)}.`;
 }
@@ -66,9 +85,13 @@ export function fundNotice(f: FundState): FundNotice | null {
     return { id: 'over', level: 'over', text: `Over by ${sentenceMoney(f.over, c)}. Happens. Here's where it went →` };
   }
   if (f.phase === 'home') return null;
-  const left = Math.max(0, f.target - f.spent);
+  // The same "left in jar" the figures show: in saving mode that's what was dropped in minus spend.
+  const left = f.inJar;
   if (f.usedRatio >= 0.9) {
-    const text = f.phase === 'onTheRoad' ? `${sentenceMoney(left, c)} left for ${days(f.daysLeft)}.` : `${sentenceMoney(left, c)} left in the jar.`;
+    let text: string;
+    if (left <= 0) text = emptyJarLine(f);
+    else if (f.phase === 'onTheRoad') text = `${sentenceMoney(left, c)} left for ${days(f.daysLeft)}.`;
+    else text = `${sentenceMoney(left, c)} left in the jar.`;
     return { id: 'p90', level: 'warn', text };
   }
   if (f.usedRatio >= 0.75) {

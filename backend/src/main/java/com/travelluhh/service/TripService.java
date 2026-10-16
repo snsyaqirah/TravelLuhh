@@ -13,6 +13,7 @@ import com.travelluhh.repository.ExpenseRepository;
 import com.travelluhh.repository.TripFundEntryRepository;
 import com.travelluhh.repository.TripMemberRepository;
 import com.travelluhh.repository.TripRepository;
+import com.travelluhh.util.Decimals;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -36,6 +37,8 @@ import java.util.stream.Collectors;
 @Transactional
 public class TripService {
 
+    static final String BUDGET_DIGITS = "Budget can have at most 10 digits and 2 decimals";
+
     private final TripRepository tripRepository;
     private final TripMemberRepository tripMemberRepository;
     private final ExpenseRepository expenseRepository;
@@ -47,6 +50,7 @@ public class TripService {
 
     public TripResponse createTrip(CreateTripRequest request, String userEmail) {
         User user = tripAccess.currentUser(userEmail);
+        requireBudgetSize(request.getBudget());
         requireDateOrder(request.getStartDate(), request.getEndDate());
 
         Trip trip = Trip.builder()
@@ -89,6 +93,7 @@ public class TripService {
     public TripResponse updateTrip(Long tripId, UpdateTripRequest request, String userEmail) {
         TripAccessService.Access access = tripAccess.access(tripId, userEmail, MemberRole.editor);
         Trip trip = access.trip();
+        requireBudgetSize(request.getBudget());
         List<String> changed = new ArrayList<>();
 
         String budgetType = normalizeBudgetType(request.getBudgetType(), null);
@@ -302,6 +307,16 @@ public class TripService {
     private static void requireOwner(TripAccessService.Access access) {
         if (!access.isOwner()) {
             throw new ForbiddenException(TripAccessService.OWNER_ONLY);
+        }
+    }
+
+    /**
+     * total_budget is DECIMAL(12, 2). The DTO's @Digits already says so; this repeats it with cheap
+     * precision/scale reads so no caller can hand a value like 1e20000000 to the database layer.
+     */
+    private static void requireBudgetSize(BigDecimal budget) {
+        if (!Decimals.fits(budget, 10, 2)) {
+            throw new BadRequestException(BUDGET_DIGITS);
         }
     }
 

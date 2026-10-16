@@ -133,6 +133,19 @@ describe('computeFund — saving mode (Phase B fund entries)', () => {
     expect(f.toSave).toBe(0);
   });
 
+  it('a negative fund sum stays in saving mode with an empty jar (never a full budget jar)', () => {
+    const f = computeFund({ budget: 1000, currency: 'MYR', startDate: '2026-12-01', endDate: '2026-12-05', totalExpenses: 0, savedAmount: -80 }, new Date(2026, 9, 16));
+    expect(f.mode).toBe('saving');
+    expect(f.saved).toBe(-80);
+    expect(f.inJar).toBe(0);
+    expect(f.fill).toBe(0);
+    expect(f.toSave).toBe(1080);
+    const g = computeFund({ ...tokyo, savedAmount: -80, totalExpenses: 300 }, day3);
+    expect(g.mode).toBe('saving');
+    expect(g.inJar).toBe(0);
+    expect(g.dailyAllowance).toBe(0);
+  });
+
   it('saved money with no budget still gives an allowance on the road', () => {
     const f = computeFund({ ...tokyo, budget: 0, savedAmount: 700, totalExpenses: 0 }, day3);
     expect(f.fill).toBe(0);

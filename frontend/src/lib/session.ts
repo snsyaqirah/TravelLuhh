@@ -120,9 +120,15 @@ export function isAuthPage(pathname: string): boolean {
   return AUTH_PAGES.some((p) => pathname === p || pathname.startsWith(`${p}/`));
 }
 
+// Control characters (tab and newline are stripped by the URL parser, so '/\t/evil' becomes '//evil') and
+// backslashes (read as '/') never belong in an app path.
+// eslint-disable-next-line no-control-regex
+const UNSAFE_PATH_CHARS = /[\u0000-\u001F\u007F\\]/;
+
 /**
  * Sanitises a ?next= value: only same-origin app paths, never protocol-relative URLs or auth pages
- * (which would loop). Falls back to `fallback`.
+ * (which would loop). Returns the path as the browser will resolve it (pathname + search + hash), or
+ * `fallback`.
  */
 export function safeNextPath(next: string | null | undefined, fallback = '/home'): string {
   if (!next) return fallback;
@@ -133,8 +139,17 @@ export function safeNextPath(next: string | null | undefined, fallback = '/home'
     return fallback;
   }
   for (const p of [next, decoded]) {
-    if (!p.startsWith('/') || p.startsWith('//') || p.startsWith('/\\')) return fallback;
+    if (UNSAFE_PATH_CHARS.test(p)) return fallback;
+    if (!p.startsWith('/') || p.startsWith('//')) return fallback;
     if (isAuthPage(p.split(/[?#]/)[0])) return fallback;
   }
-  return next;
+  const origin = typeof window !== 'undefined' ? window.location.origin : 'http://localhost';
+  let url: URL;
+  try {
+    url = new URL(next, origin);
+  } catch {
+    return fallback;
+  }
+  if (url.origin !== origin || isAuthPage(url.pathname)) return fallback;
+  return `${url.pathname}${url.search}${url.hash}`;
 }

@@ -1,6 +1,6 @@
 // The one WebGL canvas (§7.1, §7.8): orthographic, flat (no tone mapping), transparent, demand frameloop.
 // Owns the camera rig, the tween driver and the GPU resource cache lifetime. Lazy chunk only.
-import { useEffect, useLayoutEffect, useMemo, useRef, type CSSProperties, type ReactNode } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { PerformanceMonitor } from '@react-three/drei';
 import type { OrthographicCamera } from 'three';
@@ -120,11 +120,30 @@ export function IsoCanvas({
   const tweens = useMemo(() => createTweenStore(), []);
   const lostRef = useRef(onContextLost);
   lostRef.current = onContextLost;
+  const [canvasEl, setCanvasEl] = useState<HTMLCanvasElement | null>(null);
 
   useEffect(() => {
     retainIsoResources();
     return () => releaseIsoResources();
   }, []);
+
+  // Context loss while this canvas is on the page → the stage falls back and retries once (§7.8). The listener
+  // lives in an effect so it is removed on unmount: R3F calls gl.forceContextLoss() ~500 ms after the Canvas
+  // unmounts to free the GPU, and that deliberate loss on a detached canvas must not count against the session.
+  useEffect(() => {
+    if (!canvasEl) return;
+    let active = true;
+    const onLost = (e: Event) => {
+      if (!active || !canvasEl.isConnected) return;
+      e.preventDefault();
+      lostRef.current?.();
+    };
+    canvasEl.addEventListener('webglcontextlost', onLost);
+    return () => {
+      active = false;
+      canvasEl.removeEventListener('webglcontextlost', onLost);
+    };
+  }, [canvasEl]);
 
   const ctx = useMemo<IsoContextValue>(
     () => ({ theme, tier, palette: palette3d(theme), tweens, reducedMotion }),
@@ -143,10 +162,7 @@ export function IsoCanvas({
       style={{ pointerEvents: 'none', ...style }}
       onCreated={({ gl }) => {
         gl.domElement.setAttribute('aria-hidden', 'true');
-        gl.domElement.addEventListener('webglcontextlost', (e) => {
-          e.preventDefault();
-          lostRef.current?.();
-        });
+        setCanvasEl(gl.domElement);
       }}
     >
       <IsoContext.Provider value={ctx}>

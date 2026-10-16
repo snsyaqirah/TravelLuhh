@@ -56,9 +56,16 @@ public class CreateExpenseRequest {
     @Pattern(regexp = "^[A-Za-z]{3}$", message = "Original currency must be a 3-letter code, like JPY")
     private String originalCurrency;
 
-    /** originalAmount x fxRate ~= amount. Rounded to 8 decimals on save; derived when omitted. */
+    /**
+     * originalAmount x fxRate ~= amount. Rounded to 8 decimals on save; derived when omitted.
+     * Up to 16 decimals are accepted because the client sends 8 significant digits, so a JPY to MYR
+     * rate arrives as 0.030854674 (9 decimals) and a rate near 0.00000001 needs 16. @Digits also
+     * stops values like 1e-20000000 before ExpenseService rounds them.
+     */
     @DecimalMin(value = "0.0", inclusive = false, message = "Exchange rate must be greater than 0")
     @DecimalMax(value = "9999999999", message = "Exchange rate is too large")
+    @Digits(integer = 10, fraction = 16,
+            message = "Exchange rate can have at most 10 digits before the point and 16 after it")
     private BigDecimal fxRate;
 
     /** userId of a trip member. Create: defaults to the caller. Update: omitted keeps the current payer. */

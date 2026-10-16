@@ -61,12 +61,35 @@ api.interceptors.request.use((config) => {
 let refreshPromise: Promise<string> | null = null;
 let expiring = false;
 
-async function doRefresh(): Promise<string> {
+const REFRESH_LOCK = 'travelluhh:refresh';
+
+/**
+ * Another tab shares this localStorage and may rotate the refresh token while ours is in flight (the server
+ * then rejects our now-used token). If the stored refresh token is no longer the one this tab started with,
+ * that tab won: adopt its fresh access token instead of logging everyone out.
+ */
+function rotatedElsewhere(startedWith: string | null): string | null {
+  const now = getRefreshToken();
+  const access = getAccessToken();
+  return now && access && now !== startedWith ? access : null;
+}
+
+async function doRefresh(startedWith: string | null): Promise<string> {
+  // Waited for another tab's refresh (navigator.locks): it already rotated the pair.
+  const adopted = rotatedElsewhere(startedWith);
+  if (adopted) return adopted;
   const refreshToken = getRefreshToken();
   if (!refreshToken) throw new Error('No refresh token');
-  const res = await api.post<LoginResponse>('/auth/refresh', null, {
-    headers: { Authorization: `Bearer ${refreshToken}` },
-  });
+  let res;
+  try {
+    res = await api.post<LoginResponse>('/auth/refresh', null, {
+      headers: { Authorization: `Bearer ${refreshToken}` },
+    });
+  } catch (err) {
+    const rotated = rotatedElsewhere(refreshToken);
+    if (rotated) return rotated;
+    throw err;
+  }
   const accessToken = res.data?.accessToken;
   if (!accessToken) throw new Error('Refresh returned no access token');
   // The server rotates refresh tokens: keep the new one or the next refresh fails.
@@ -74,10 +97,30 @@ async function doRefresh(): Promise<string> {
   return accessToken;
 }
 
-/** Single-flight token refresh. Resolves with the new access token. */
+/** Runs `fn` under a cross-tab lock when the browser has the Web Locks API; plain call otherwise. */
+function withRefreshLock<T>(fn: () => Promise<T>): Promise<T> {
+  const locks = typeof navigator !== 'undefined' ? navigator.locks : undefined;
+  if (!locks || typeof locks.request !== 'function') return fn();
+  let ran = false;
+  const run = () => {
+    ran = true;
+    return fn();
+  };
+  try {
+    return locks.request(REFRESH_LOCK, run).catch((err: unknown) => {
+      if (ran) throw err;
+      return fn(); // the lock itself failed (e.g. not allowed here): refresh without it
+    });
+  } catch {
+    return fn();
+  }
+}
+
+/** Single-flight token refresh (per tab, and across tabs where Web Locks exist). Resolves with the new access token. */
 export function refreshSession(): Promise<string> {
   if (!refreshPromise) {
-    refreshPromise = doRefresh().finally(() => {
+    const startedWith = getRefreshToken();
+    refreshPromise = withRefreshLock(() => doRefresh(startedWith)).finally(() => {
       refreshPromise = null;
     });
   }

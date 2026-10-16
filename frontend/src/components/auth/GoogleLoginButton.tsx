@@ -1,9 +1,10 @@
 // "Continue with Google" in Google's own button style (light: white with a #747775 rule; dark: #131314 with a
 // #8E918F rule) and the unchanged four-colour G, as Google's branding rules ask. The redirect goes through the
-// backend (/oauth2/authorization/google); a ?next path rides along in sessionStorage for the callback.
+// backend (/oauth2/authorization/google); a ?next path and a "flow started in this tab" nonce ride along in
+// sessionStorage for the callback.
 import { useEffect, useState } from 'react';
 import { useAuth } from '@/context/AuthContext';
-import { rememberOAuthNext } from '@/components/frontdoor/oauthNext';
+import { beginOAuthFlow, rememberOAuthNext } from '@/components/frontdoor/oauthNext';
 import { cn } from '@/lib/utils';
 
 export function GoogleMark({ className }: { className?: string }) {
@@ -58,6 +59,7 @@ export function GoogleLoginButton({ next, label = 'Continue with Google', disabl
       onClick={() => {
         setLeaving(true);
         rememberOAuthNext(next);
+        beginOAuthFlow();
         loginWithGoogle();
       }}
       className={cn(

@@ -3,22 +3,24 @@
 //
 // Two modes:
 //  - 'budget' (no fund entries yet): the budget counts as already set aside; the jar starts full and drains.
-//  - 'saving' (savedAmount > 0, §2.3 Phase B): the jar holds what was really dropped in, minus spend.
+//  - 'saving' (savedAmount ≠ 0, §2.3 Phase B): the jar holds what was really dropped in, minus spend. A negative
+//    sum (more taken out than dropped in) is still saving mode with an empty jar, never a "full" budget jar.
 // `over` is always measured against the target (budget).
 import { useMemo } from 'react';
 import type { Trip } from '@/types';
 import { dayIndex, getPhase, tripDays, type Phase } from '@/lib/phase';
 import { useToday } from '@/hooks/useToday';
+import { roundMoney } from '@/lib/money';
 
 export interface FundState {
   /** trip.budget */
   target: number;
   /** trip.totalExpenses (trip currency) */
   spent: number;
-  /** SUM of fund entries (trip.savedAmount). 0 in budget mode. */
+  /** SUM of fund entries (trip.savedAmount), as is: negative when more came out than went in. 0 in budget mode. */
   saved: number;
   mode: 'budget' | 'saving';
-  /** budget mode: max(0, target − spent). saving mode: max(0, saved − spent). */
+  /** budget mode: max(0, target − spent). saving mode: max(0, saved − spent). Never negative. */
   inJar: number;
   /** saving mode: max(0, target − saved). Always 0 in budget mode. */
   toSave: number;
@@ -62,13 +64,17 @@ const clamp01 = (x: number) => (x < 0 ? 0 : x > 1 ? 1 : x);
 export function computeFund(trip: FundTrip, today: Date = new Date(), opts: ComputeFundOptions = {}): FundState {
   const target = Math.max(0, finite(trip.budget));
   const spent = Math.max(0, finite(opts.spent ?? trip.totalExpenses ?? trip.spentAmount ?? 0));
-  const saved = Math.max(0, finite(opts.saved ?? trip.savedAmount ?? 0));
-  const mode: FundState['mode'] = saved > 0 ? 'saving' : 'budget';
+  const saved = finite(opts.saved ?? trip.savedAmount ?? 0);
+  // Any fund entry at all means saving mode, even when the sum went below zero: falling back to budget mode
+  // there would show the whole budget as set aside (a full jar) when the fund is actually short.
+  const mode: FundState['mode'] = saved !== 0 ? 'saving' : 'budget';
   const hasBudget = target > 0;
 
-  const inJar = Math.max(0, (mode === 'saving' ? saved : target) - spent);
+  // Rounded to the currency's minor unit: a float sum of expenses that lands a hair over the budget is on
+  // budget, not "Over by RM 0.00".
+  const inJar = Math.max(0, roundMoney((mode === 'saving' ? saved : target) - spent, trip.currency));
   const toSave = mode === 'saving' ? Math.max(0, target - saved) : 0;
-  const over = Math.max(0, spent - target);
+  const over = Math.max(0, roundMoney(spent - target, trip.currency));
   const fill = hasBudget ? clamp01(inJar / target) : 0;
   const usedRatio = hasBudget ? spent / target : 0;
 
@@ -89,7 +95,7 @@ export function computeFund(trip: FundTrip, today: Date = new Date(), opts: Comp
   }
 
   let dailyAllowance: number | null = null;
-  if (phase === 'onTheRoad' && (hasBudget || saved > 0)) dailyAllowance = inJar / daysLeft;
+  if (phase === 'onTheRoad' && (hasBudget || mode === 'saving')) dailyAllowance = inJar / daysLeft;
   else if (phase === 'upcoming' && hasBudget) dailyAllowance = target / daysTotal;
 
   let pace: FundState['pace'] = null;

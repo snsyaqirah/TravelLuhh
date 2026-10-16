@@ -55,6 +55,12 @@ describe('figures: budget vs saving mode', () => {
     const f = computeFund({ ...tokyo, totalExpenses: 0, savedAmount: 4000 }, today);
     expect(sp(savedLine(f))).toBe('Saved RM 4,000 of RM 4,000. Cukup.');
   });
+
+  it('a fund below zero says it is short instead of "Saved −RM 80"', () => {
+    const f = computeFund({ ...tokyo, totalExpenses: 0, savedAmount: -80 }, today);
+    expect(sp(savedLine(f))).toBe('Fund is RM 80 short · RM 4,080 to go');
+    expect(sp(savedLine({ ...f, hasBudget: false }))).toBe('Fund is RM 80 short.');
+  });
 });
 
 describe('fxPair', () => {

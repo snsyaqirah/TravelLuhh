@@ -4,7 +4,7 @@
 import type { IsoTier } from '@/iso/types';
 
 export type Pref3D = 'auto' | 'off';
-export type GateReason = 'pref-off' | 'save-data' | 'no-webgl' | 'env-disabled' | 'context-lost';
+export type GateReason = 'pref-off' | 'save-data' | 'no-webgl' | 'env-disabled' | 'context-lost' | 'render-error';
 
 export type GateResult = { ok: true; tier: IsoTier } | { ok: false; reason: GateReason };
 
@@ -89,15 +89,16 @@ interface NavigatorExtras {
   deviceMemory?: number;
 }
 
+/**
+ * WebGL2 only: three r163+ (we ship 0.170) creates nothing but WebGL2 contexts, so a WebGL1-only device passing
+ * the probe would just crash the canvas later.
+ */
 export function probeWebGL(): boolean {
   if (typeof document === 'undefined') return false;
   try {
     const canvas = document.createElement('canvas');
     const opts: WebGLContextAttributes = { failIfMajorPerformanceCaveat: true };
-    const gl = (canvas.getContext('webgl2', opts) ?? canvas.getContext('webgl', opts)) as
-      | WebGL2RenderingContext
-      | WebGLRenderingContext
-      | null;
+    const gl = canvas.getContext('webgl2', opts) as WebGL2RenderingContext | null;
     if (!gl) return false;
     // Free the probe context straight away; browsers cap live contexts at ~16.
     gl.getExtension('WEBGL_lose_context')?.loseContext();
@@ -144,6 +145,22 @@ export function noteContextLost(): boolean {
     return false;
   }
   return true;
+}
+
+/**
+ * The canvas or a scene threw while mounting or rendering (e.g. the WebGL2 context couldn't be created after
+ * all). Stages fall back to their SVG twins for the rest of the session.
+ */
+export function note3DFailure(): void {
+  sessionFailure = 'render-error';
+}
+
+const CHUNK_ERROR = /dynamically imported module|importing a module script failed|loading (css )?chunk|error loading dynamically/i;
+
+/** A scene chunk that failed to download (flaky network): that stage stays flat, the session keeps 3D. */
+export function isChunkLoadError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  return error.name === 'ChunkLoadError' || CHUNK_ERROR.test(error.message);
 }
 
 export function isTouchDevice(): boolean {

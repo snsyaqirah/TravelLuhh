@@ -13,6 +13,7 @@ import com.travelluhh.repository.ExpenseRepository;
 import com.travelluhh.repository.ExpenseSubItemRepository;
 import com.travelluhh.repository.TripMemberRepository;
 import com.travelluhh.repository.UserRepository;
+import com.travelluhh.util.Decimals;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -45,6 +46,23 @@ public class ExpenseService {
 
     static final String EXPENSE_NOT_FOUND = "Expense not found";
     static final String CONVERT_FIRST = "Convert to trip currency first";
+    static final String AMOUNT_DIGITS = "Amount can have at most 10 digits and 2 decimals";
+    static final String ORIGINAL_AMOUNT_DIGITS = "Original amount can have at most 10 digits";
+    static final String FX_RATE_DIGITS = "Exchange rate can have at most 10 digits before the point and 16 after it";
+    static final String SUB_ITEM_AMOUNT_DIGITS = "Sub-item amount can have at most 10 digits and 2 decimals";
+
+    /** Digits before the point for money and rates: amount is DECIMAL(12, 2), fx_rate DECIMAL(18, 8). */
+    static final int MAX_INTEGER_DIGITS = 10;
+    /**
+     * Decimals a money value may arrive with before it is rounded to 2. The DTO is stricter (2, or 4
+     * for originalAmount); this bound only keeps rounding cheap for any caller.
+     */
+    static final int MAX_MONEY_DECIMALS = 4;
+    /**
+     * Decimals an fxRate may arrive with before it is rounded to 8. The client sends rates with 8
+     * significant digits (0.030854674 for JPY to MYR), so a rate as small as 0.00000001 needs 16.
+     */
+    static final int MAX_RATE_DECIMALS = 16;
 
     private final ExpenseRepository expenseRepository;
     private final ExpenseSubItemRepository subItemRepository;
@@ -60,6 +78,7 @@ public class ExpenseService {
         Trip trip = tripAccess.requireEditor(request.getTripId(), user);
 
         Money money = resolveMoney(request, trip.getCurrency());
+        requireSubItemSizes(request.getSubItems());
         Long paidBy = request.getPaidBy() != null ? requireMemberPayer(trip, request.getPaidBy()) : user.getId();
 
         Expense expense = Expense.builder()
@@ -81,7 +100,10 @@ public class ExpenseService {
         return toResponse(expense, subItems, users);
     }
 
-    /** PUT semantics: every field is replaced, except paidBy (omitted keeps the payer) and subItems (null keeps them). */
+    /**
+     * PUT semantics: every field is replaced, except paidBy (omitted keeps the payer) and subItems (null keeps them).
+     * Re-sending the current payer keeps them too, even if they have since left the trip.
+     */
     public ExpenseResponse updateExpense(Long expenseId, CreateExpenseRequest request, String userEmail) {
         User user = tripAccess.currentUser(userEmail);
         Expense expense = expenseRepository.findById(expenseId)
@@ -94,9 +116,11 @@ public class ExpenseService {
         }
 
         Money money = resolveMoney(request, trip.getCurrency());
-        Long paidBy = request.getPaidBy() != null
-                ? requireMemberPayer(trip, request.getPaidBy())
-                : expense.getPaidBy();
+        requireSubItemSizes(request.getSubItems());
+        // The client sends back the paidBy it was given (the effective payer); that's not a change.
+        boolean payerUnchanged = request.getPaidBy() == null
+                || Objects.equals(request.getPaidBy(), expense.effectivePayerId());
+        Long paidBy = payerUnchanged ? expense.getPaidBy() : requireMemberPayer(trip, request.getPaidBy());
 
         Snapshot before = Snapshot.of(expense);
         expense.setDescription(request.getDescription().trim());
@@ -180,6 +204,11 @@ public class ExpenseService {
      *   amount / originalAmount.
      */
     static Money resolveMoney(CreateExpenseRequest request, String tripCurrencyRaw) {
+        // Size checks before any setScale/divide: rounding 1e-20000000 would burn seconds of CPU.
+        requireSize(request.getAmount(), MAX_MONEY_DECIMALS, AMOUNT_DIGITS);
+        requireSize(request.getOriginalAmount(), MAX_MONEY_DECIMALS, ORIGINAL_AMOUNT_DIGITS);
+        requireSize(request.getFxRate(), MAX_RATE_DECIMALS, FX_RATE_DIGITS);
+
         String requestCurrency = upper(request.getCurrency());
         // Legacy trips may have no currency; then the request's currency is the trip currency.
         String tripCurrency = upper(tripCurrencyRaw) != null ? upper(tripCurrencyRaw) : requestCurrency;
@@ -219,6 +248,25 @@ public class ExpenseService {
             throw new BadRequestException("Exchange rate must be greater than 0");
         }
         return new Money(amount, tripCurrency, original, originalCurrency, fxRate);
+    }
+
+    /** 400 unless value (when present) has at most 10 digits before the point and maxDecimals after it. */
+    private static void requireSize(BigDecimal value, int maxDecimals, String message) {
+        if (!Decimals.fits(value, MAX_INTEGER_DIGITS, maxDecimals)) {
+            throw new BadRequestException(message);
+        }
+    }
+
+    /** Same size check for every sub-item amount, before the expense is written. */
+    private static void requireSubItemSizes(List<CreateExpenseRequest.SubItemRequest> subItems) {
+        if (subItems == null) {
+            return;
+        }
+        for (CreateExpenseRequest.SubItemRequest s : subItems) {
+            if (s != null) {
+                requireSize(s.getAmount(), MAX_MONEY_DECIMALS, SUB_ITEM_AMOUNT_DIGITS);
+            }
+        }
     }
 
     /** paidBy must be the owner or someone with a trip_members row. */

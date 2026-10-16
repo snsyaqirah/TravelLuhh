@@ -25,6 +25,7 @@ import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 
 import java.math.BigDecimal;
+import java.time.Duration;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
@@ -32,6 +33,7 @@ import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -225,6 +227,112 @@ class ExpenseServiceTest {
     }
 
     @Nested
+    class SizeLimits {
+
+        private CreateExpenseRequest converted(String fxRate) {
+            CreateExpenseRequest r = request("95.40", "MYR");
+            r.setOriginalAmount(new BigDecimal("3200"));
+            r.setOriginalCurrency("JPY");
+            r.setFxRate(fxRate != null ? new BigDecimal(fxRate) : null);
+            return r;
+        }
+
+        private void rejectedFast(CreateExpenseRequest r, String message) {
+            // Rounding 1e-20000000 to 8 places used to take ~10 s of CPU; the size check answers at once.
+            assertTimeoutPreemptively(Duration.ofSeconds(2), () ->
+                    assertThatThrownBy(() -> service.createExpense(r, EDITOR.getEmail()))
+                            .isInstanceOf(BadRequestException.class)
+                            .hasMessage(message));
+            verify(expenseRepository, never()).save(any());
+        }
+
+        @Test
+        void fxRateWithAHugeNegativeExponentIsRejectedFast() {
+            rejectedFast(converted("1e-20000000"), ExpenseService.FX_RATE_DIGITS);
+        }
+
+        @Test
+        void fxRateWithAHugePositiveExponentIsRejectedFast() {
+            rejectedFast(converted("1e20000000"), ExpenseService.FX_RATE_DIGITS);
+        }
+
+        @Test
+        void fxRateIsCheckedEvenWhenItWouldBeIgnored() {
+            CreateExpenseRequest r = request("40", "MYR");
+            r.setFxRate(new BigDecimal("1e-20000000"));
+            rejectedFast(r, ExpenseService.FX_RATE_DIGITS);
+        }
+
+        @Test
+        void amountWithAHugeExponentIsRejectedFast() {
+            rejectedFast(request("1e-20000000", "MYR"), ExpenseService.AMOUNT_DIGITS);
+            rejectedFast(request("1e20000000", "MYR"), ExpenseService.AMOUNT_DIGITS);
+        }
+
+        @Test
+        void originalAmountWithAHugeExponentIsRejectedFast() {
+            CreateExpenseRequest r = converted("0.0298125");
+            r.setOriginalAmount(new BigDecimal("1e-20000000"));
+            rejectedFast(r, ExpenseService.ORIGINAL_AMOUNT_DIGITS);
+            r.setOriginalAmount(new BigDecimal("1e20000000"));
+            rejectedFast(r, ExpenseService.ORIGINAL_AMOUNT_DIGITS);
+        }
+
+        @Test
+        void subItemAmountWithAHugeExponentIsRejectedBeforeAnythingIsSaved() {
+            CreateExpenseRequest r = request("40", "MYR");
+            CreateExpenseRequest.SubItemRequest sub = new CreateExpenseRequest.SubItemRequest();
+            sub.setDescription("Gyoza");
+            sub.setAmount(new BigDecimal("1e-20000000"));
+            r.setSubItems(List.of(sub));
+            rejectedFast(r, ExpenseService.SUB_ITEM_AMOUNT_DIGITS);
+            verify(subItemRepository, never()).saveAll(any());
+        }
+
+        @Test
+        void hugeExponentsAreRejectedOnEditToo() {
+            Expense existing = Expense.builder()
+                    .id(100L).trip(trip).addedBy(OWNER.getId()).paidBy(OWNER.getId())
+                    .description("Ramen").amount(new BigDecimal("30.00")).currency("MYR")
+                    .category(Expense.ExpenseCategory.food).expenseDate(LocalDate.of(2026, 11, 2))
+                    .build();
+            when(expenseRepository.findById(100L)).thenReturn(Optional.of(existing));
+
+            assertTimeoutPreemptively(Duration.ofSeconds(2), () ->
+                    assertThatThrownBy(() -> service.updateExpense(100L, converted("1e-20000000"), EDITOR.getEmail()))
+                            .isInstanceOf(BadRequestException.class)
+                            .hasMessage(ExpenseService.FX_RATE_DIGITS));
+            verify(expenseRepository, never()).saveAndFlush(any());
+            assertThat(existing.getAmount()).isEqualByComparingTo("30.00");
+        }
+
+        @Test
+        void clientRatesWithEightSignificantDigitsAreAccepted() {
+            // The client sends Number(rate.toPrecision(8)): 9 decimals for JPY to MYR.
+            service.createExpense(converted("0.030854674"), EDITOR.getEmail());
+            assertThat(savedExpense().getFxRate()).isEqualByComparingTo("0.03085467");
+        }
+
+        @Test
+        void sixteenDecimalsIsTheMostARateMayCarry() {
+            assertThat(ExpenseService.resolveMoney(converted("0.0000000123456789"), "MYR").fxRate())
+                    .isEqualByComparingTo("0.00000001");
+            assertThatThrownBy(() -> ExpenseService.resolveMoney(converted("0.00000001234567891"), "MYR"))
+                    .isInstanceOf(BadRequestException.class)
+                    .hasMessage(ExpenseService.FX_RATE_DIGITS);
+            assertThatThrownBy(() -> ExpenseService.resolveMoney(converted("12345678901"), "MYR"))
+                    .isInstanceOf(BadRequestException.class)
+                    .hasMessage(ExpenseService.FX_RATE_DIGITS);
+        }
+
+        @Test
+        void trailingZerosDoNotCountAsDecimals() {
+            service.createExpense(request("40.000000000", "MYR"), EDITOR.getEmail());
+            assertThat(savedExpense().getAmount()).isEqualByComparingTo("40.00");
+        }
+    }
+
+    @Nested
     class PayerAndRoles {
 
         @Test
@@ -347,6 +455,57 @@ class ExpenseServiceTest {
                     .isInstanceOf(ForbiddenException.class);
             assertThatThrownBy(() -> service.deleteExpense(100L, VIEWER.getEmail()))
                     .isInstanceOf(ForbiddenException.class);
+        }
+
+        @Test
+        void resendingTheCurrentPayerWorksAfterTheyLeftTheTrip() {
+            // STRANGER paid, then left: no trip_members row any more.
+            existing.setPaidBy(STRANGER.getId());
+            CreateExpenseRequest r = request("45", "MYR");
+            r.setPaidBy(STRANGER.getId());
+
+            ExpenseResponse response = service.updateExpense(100L, r, EDITOR.getEmail());
+
+            assertThat(existing.getPaidBy()).isEqualTo(STRANGER.getId());
+            assertThat(existing.getAmount()).isEqualByComparingTo("45.00");
+            assertThat(response.getPaidBy()).isEqualTo(STRANGER.getId());
+            verify(expenseRepository).saveAndFlush(existing);
+        }
+
+        @Test
+        void resendingTheEffectivePayerOfALegacyRowKeepsItUnchanged() {
+            // Legacy row: no paid_by, so the response reported addedBy as the payer; that person left.
+            existing.setAddedBy(STRANGER.getId());
+            CreateExpenseRequest r = request("45", "MYR");
+            r.setPaidBy(STRANGER.getId());
+
+            ExpenseResponse response = service.updateExpense(100L, r, EDITOR.getEmail());
+
+            assertThat(existing.getPaidBy()).isNull();
+            assertThat(response.getPaidBy()).isEqualTo(STRANGER.getId());
+        }
+
+        @Test
+        void switchingThePayerToSomeoneOffTheTripIsStillRejected() {
+            existing.setPaidBy(EDITOR.getId());
+            CreateExpenseRequest r = request("45", "MYR");
+            r.setPaidBy(STRANGER.getId());
+
+            assertThatThrownBy(() -> service.updateExpense(100L, r, EDITOR.getEmail()))
+                    .isInstanceOf(BadRequestException.class)
+                    .hasMessage("Paid by must be someone on this trip");
+            verify(expenseRepository, never()).saveAndFlush(any());
+        }
+
+        @Test
+        void switchingThePayerToAnotherMemberStillWorks() {
+            existing.setPaidBy(STRANGER.getId());
+            CreateExpenseRequest r = request("45", "MYR");
+            r.setPaidBy(VIEWER.getId());
+
+            service.updateExpense(100L, r, EDITOR.getEmail());
+
+            assertThat(existing.getPaidBy()).isEqualTo(VIEWER.getId());
         }
 
         @Test

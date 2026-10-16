@@ -59,6 +59,24 @@ describe('TripTicket', () => {
     expect(nb(screen.getByText(/4,000$/).textContent)).toBe('RM 4,000');
   });
 
+  it('the Fund field drops .00 on a whole amount (fits the 375 grid) and keeps real cents', () => {
+    const { unmount } = inRouter(<TripTicket variant="review" trip={{ ...tokyo, budget: 800, totalExpenses: 0 }} today={new Date(2026, 9, 15)} />);
+    expect(screen.getByText((_, el) => el?.tagName === 'DD' && nb(el.textContent) === 'RM 800')).toBeInTheDocument();
+    unmount();
+    inRouter(<TripTicket variant="review" trip={{ ...tokyo, budget: 812.5, totalExpenses: 0 }} today={new Date(2026, 9, 15)} />);
+    expect(screen.getByText((_, el) => el?.tagName === 'DD' && nb(el.textContent) === 'RM 812.50')).toBeInTheDocument();
+  });
+
+  it('hero on the road with every saved ringgit spent says why instead of "RM 0 a day"', () => {
+    inRouter(
+      <TripTicket variant="hero" trip={{ ...tokyo, budget: 1000, savedAmount: 500, totalExpenses: 920 }} today={new Date(2026, 10, 14)} />,
+    );
+    expect(nb(screen.getByText(/spent everything you dropped in/).textContent)).toBe(
+      "You've spent everything you dropped in. RM 80.00 of the budget isn't saved yet.",
+    );
+    expect(screen.queryByText(/a day for the next/)).toBeNull();
+  });
+
   it('review has no menu and no link even with handlers', () => {
     inRouter(<TripTicket variant="review" trip={{ ...tokyo, id: undefined }} today={new Date(2026, 9, 15)} onEdit={() => {}} />);
     expect(screen.queryByRole('button', { name: /More for/ })).toBeNull();

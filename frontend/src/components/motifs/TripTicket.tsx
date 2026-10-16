@@ -180,7 +180,7 @@ function FullTicket({
       <TicketField label="From/To" value={routeLabel(trip.destinationCountry, homeCountry)} />
       <TicketField label="Depart" value={formatDayMonth(trip.startDate)} />
       <TicketField label="Days" value={durationLabel(fund.daysTotal)} />
-      <TicketField label="Fund" value={fund.hasBudget ? formatMoney(fund.target, fund.currency, { decimals: 'auto' }) : 'Not set'} />
+      <TicketField label="Fund" value={fund.hasBudget ? fundFieldMoney(fund.target, fund.currency) : 'Not set'} />
     </TicketFieldGrid>
   );
 
@@ -252,6 +252,11 @@ function FullTicket({
   );
 }
 
+/** The ticket's Fund field: a whole amount drops its .00 (fits the 375 grid), cents stay when there are any. */
+function fundFieldMoney(amount: number, currency: string): string {
+  return formatMoney(amount, currency, { decimals: Number.isInteger(roundMoney(amount, currency)) ? 'none' : 'auto' });
+}
+
 /** "28 days to Tokyo": the capital when the catalogue has one, else the country name. */
 function placeName(code: string): string {
   const c = countries.find((x) => x.code === code.toUpperCase());
@@ -272,7 +277,9 @@ function HeroBody({ fund, trip, daysToGo }: { fund: FundState; trip: TicketTrip;
   }
   if (fund.phase === 'onTheRoad') {
     const pace = paceSentence(fund);
-    if (!fund.hasBudget && fund.saved <= 0) return <p className="type-body-s mt-3 text-ink-2">{practicalLine(fund)}</p>;
+    if (!fund.hasBudget && fund.mode === 'budget') return <p className="type-body-s mt-3 text-ink-2">{practicalLine(fund)}</p>;
+    // Nothing over, nothing in the jar (all of the saved money spent, or exactly on budget): say why, not "RM 0 a day".
+    if (fund.over <= 0 && fund.inJar <= 0) return <p className="type-body-s mt-3 text-ink">{practicalLine(fund)}</p>;
     if (fund.over > 0) {
       return (
         <div className="mt-3">
