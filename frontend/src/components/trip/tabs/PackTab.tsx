@@ -150,7 +150,8 @@ export function PackTab({ trip, canEdit }: PackTabProps) {
       {canEdit ? (
         <QuickAdd
           onAdd={(label, category) => addItem(label, category)}
-          className="sticky bottom-[calc(64px+env(safe-area-inset-bottom))] z-10 -mx-4 mt-4 border-t border-rule bg-background px-4 pb-5 pt-3 md:bottom-0 md:mx-0 md:px-0 lg:max-w-[720px]"
+          // Sticky above the BottomBar on phones only; on wider screens a sticky bar floated over the quick packs.
+          className="sticky bottom-[calc(64px+env(safe-area-inset-bottom))] z-10 -mx-4 mt-4 border-t border-rule bg-background px-4 pb-5 pt-3 md:static md:mx-0 md:px-0 lg:max-w-[720px]"
         />
       ) : null}
     </div>
