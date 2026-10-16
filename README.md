@@ -14,6 +14,7 @@ home, the trip gets a passport stamp and whatever's left over is your *baki*.
   <img src="docs/screenshots/trip-fund-desktop.png" alt="Trip page: the jar next to category blocks that add up to the budget" width="360">
   <img src="docs/screenshots/trip-mobile.png" alt="Trip page on a phone" width="180">
   <img src="docs/screenshots/landing-desktop.png" alt="Landing page" width="360">
+  <img src="docs/screenshots/trip-fund-dark.png" alt="Trip page in the dark theme" width="360">
 </p>
 
 ## What it does
